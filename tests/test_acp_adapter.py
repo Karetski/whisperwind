@@ -520,3 +520,190 @@ def test_given_valid_acp_harness_when_a_flow_is_validated_then_it_passes(tmp_pat
 
     # Then
     assert report.errors == []
+
+
+# -- the Whisperwind extension ----------------------------------------------------------
+
+EVERY_FEATURE = {
+    "version": 1,
+    "features": [
+        "instructions",
+        "output_schema",
+        "max_turns",
+        "budget",
+        "usage",
+        "tool_rules",
+        "permissions",
+        "outcome",
+    ],
+}
+SCHEMA = {"type": "object", "properties": {"word": {"type": "string"}}}
+DECLARED = "capabilities: {structured_output: true, tokens: true, turn_cap: true}\n"
+
+
+def test_given_extension_when_prompted_then_each_requested_key_reaches_the_agent(
+    tmp_path: Path,
+) -> None:
+    # When
+    _, _, messages = drive(
+        tmp_path,
+        {"extension": EVERY_FEATURE},
+        prompt="Pick a word.",
+        instructions="Be brief.",
+        output_schema=SCHEMA,
+        max_turns=5,
+        budget_usd=1.5,
+        budget_tokens=20000,
+        effort="high",
+        permissions="read-only",
+        allow_tools=["Read"],
+        deny_tools=["Bash"],
+    )
+
+    # Then
+    params = messages[-1]["params"]
+    assert params["prompt"] == [{"type": "text", "text": "Pick a word."}]
+    assert params["_meta"] == {
+        "whisperwind": {
+            "instructions": "Be brief.",
+            "output_schema": SCHEMA,
+            "max_turns": 5,
+            "budget_usd": 1.5,
+            "budget_tokens": 20000,
+            "effort": "high",
+            "permissions": "read-only",
+            "allow_tools": ["Read"],
+            "deny_tools": ["Bash"],
+        }
+    }
+
+
+def test_given_extension_result_when_the_turn_ends_then_each_key_is_mapped(
+    tmp_path: Path,
+) -> None:
+    # Given
+    usage = {"input_tokens": 100, "cached_input_tokens": 40, "output_tokens": 20}
+    payload = {
+        "outcome": "succeeded",
+        "output": {"word": "kiwi"},
+        "num_turns": 7,
+        "model": "large-2",
+        "usage": {**usage, "reasoning_tokens": 5},
+        "cost_usd": 0.12,
+        "permission_denials": [{"tool": "Bash", "reason": "not allowed"}],
+    }
+    script = {"extension": EVERY_FEATURE, "turns": [{"steps": [], "result": payload}]}
+
+    # When
+    result, _, _ = drive(tmp_path, script, output_schema=SCHEMA)
+
+    # Then
+    assert (result.outcome, result.output, result.num_turns) == ("succeeded", {"word": "kiwi"}, 7)
+    assert (result.model, result.cost_usd) == ("large-2", 0.12)
+    assert result.usage.to_json() == {**usage, "reasoning_tokens": 5, "total_tokens": 120}
+    assert [(d.tool, d.reason) for d in result.permission_denials] == [("Bash", "not allowed")]
+
+
+@pytest.mark.parametrize(
+    ("payload", "outcome", "kind"),
+    [
+        (
+            {"outcome": "budget_exceeded", "error": {"kind": "budget", "message": "spent"}},
+            "budget_exceeded",
+            "budget",
+        ),
+        ({"outcome": "schema_invalid"}, "schema_invalid", "harness_error"),
+        ({"outcome": "succeeded"}, "succeeded", None),
+    ],
+)
+def test_given_detailed_outcome_when_the_agent_reports_it_then_it_refines_the_stop_reason(
+    tmp_path: Path, payload: dict[str, Any], outcome: str, kind: str | None
+) -> None:
+    # Given: the stop reason alone would say "failed"
+    turn = {"steps": [], "stop": "max_turn_requests", "result": payload}
+
+    # When
+    result, _, _ = drive(tmp_path, {"extension": EVERY_FEATURE, "turns": [turn]})
+
+    # Then
+    assert result.outcome == outcome
+    assert (result.error.kind if result.error else None) == kind
+
+
+def test_given_usage_update_cost_when_the_result_reports_cost_then_the_standard_field_wins(
+    tmp_path: Path,
+) -> None:
+    # Given
+    turn = {"steps": [{"usage": {"cost": 0.3}}], "result": {"cost_usd": 0.9}}
+
+    # When
+    result, _, _ = drive(tmp_path, {"extension": EVERY_FEATURE, "turns": [turn]})
+
+    # Then
+    assert result.cost_usd == 0.3
+
+
+def test_given_agent_without_extension_when_capabilities_are_declared_then_it_falls_back(
+    tmp_path: Path,
+) -> None:
+    # Given
+    script = {"turns": [{"steps": [{"text": 'Here: {"word": "kiwi"}'}]}]}
+
+    # When
+    result, events, messages = drive(
+        tmp_path, script, DECLARED, output_schema=SCHEMA, instructions="Be brief."
+    )
+
+    # Then
+    assert (result.outcome, result.output) == ("succeeded", {"word": "kiwi"})
+    params = messages[-1]["params"]
+    assert "_meta" not in params
+    text = params["prompt"][0]["text"]
+    assert text.startswith("# Instructions\n\nBe brief.")
+    assert "reply with only a JSON object" in text
+    warnings = [e.message for e in events if isinstance(e, Log) and e.level == "warning"]
+    assert warnings == [
+        "the harness file declares structured_output, but the agent does not advertise "
+        "the whisperwind extension's output_schema feature",
+        "the harness file declares turn_cap, but the agent does not advertise "
+        "the whisperwind extension's max_turns feature",
+        "the harness file declares tokens, but the agent does not advertise "
+        "the whisperwind extension's usage feature",
+    ]
+
+
+def test_given_unknown_extension_version_when_run_then_it_is_reported_and_plain_acp_is_used(
+    tmp_path: Path,
+) -> None:
+    # Given
+    script = {"extension": {"version": 99, "features": ["outcome"]}}
+
+    # When
+    result, events, messages = drive(tmp_path, script)
+
+    # Then
+    assert result.outcome == "succeeded"
+    assert "_meta" not in messages[-1]["params"]
+    warning = (
+        "the agent's whisperwind extension version 99 is not one Whisperwind knows (1); "
+        "using plain ACP"
+    )
+    assert Log("warning", warning) in events
+
+
+@pytest.mark.parametrize(("declared", "warned"), [("", True), (DECLARED, False)])
+def test_given_max_turns_when_validated_then_the_declared_capability_decides(
+    tmp_path: Path, declared: str, warned: bool
+) -> None:
+    # Given
+    write_harness(tmp_path, {}, declared)
+    (tmp_path / "flow.yaml").write_text(
+        "name: f\nnodes:\n  a: {type: agent, harness: ref, max_turns: 3, prompt: Hi.}\n"
+    )
+
+    # When
+    report = validate(tmp_path / "flow.yaml")
+
+    # Then
+    ignored = [p.message for p in report.problems if p.code == "W-IGNORED-OPTION"]
+    assert (ignored == ["the ref adapter ignores max_turns"]) is warned

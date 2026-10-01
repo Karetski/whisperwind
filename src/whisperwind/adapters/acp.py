@@ -14,6 +14,15 @@ its own tools in `cwd`. Permission requests are answered from the node's
 permission profile by tool kind. Tools the agent approves on its own never
 reach the client, so the harness file's optional `modes` map also selects the
 agent's mode for each profile.
+
+What ACP v1 lacks of the adapter contract travels in Whisperwind's extension:
+an agent that advertises `agentCapabilities._meta.whisperwind` with a known
+version and its features gets the request's instructions, output schema,
+limits and permissions under the prompt's `_meta.whisperwind`, and answers with
+its outcome, output, usage, turns and denials under the response's
+`_meta.whisperwind`. Standard ACP fields win where both carry the same
+information. Without the extension, instructions lead the prompt and
+structured output falls back to a JSON instruction and extraction.
 """
 
 from __future__ import annotations
@@ -52,6 +61,7 @@ from whisperwind.adapters.process import (
     _stopped_outcome,
     version_in_range,
 )
+from whisperwind.engine.structured import extract_json, json_instruction
 from whisperwind.flowspec import duration
 from whisperwind.schema import Bool, Field, ListOf, MapOf, Str, Struct
 
@@ -65,6 +75,18 @@ APPROVED_KINDS = {
     "read-only": frozenset({"read", "search", "think", "fetch"}),
     "edit": frozenset({"read", "search", "think", "fetch", "edit", "delete", "move"}),
 }
+EXTENSION = "whisperwind"  # the `_meta` key of Whisperwind's ACP extension
+EXTENSION_VERSIONS = (1,)
+# Extension features that back a capability the harness file may declare.
+FEATURE_CAPABILITIES = {
+    "output_schema": "structured_output",
+    "max_turns": "turn_cap",
+    "budget": "budget_cap",
+    "usage": "tokens",
+    "tool_rules": "tool_rules",
+}
+# Outcomes an agent can know about; the engine decides `cancelled` and `timed_out`.
+AGENT_OUTCOMES = ("succeeded", "failed", "budget_exceeded", "schema_invalid")
 
 ACP_HARNESS_FILE = Struct(
     {
@@ -73,7 +95,12 @@ ACP_HARNESS_FILE = Struct(
         "command": Field(ListOf(Str(), min_items=1), required=True),
         "interactive_command": Field(ListOf(Str(), min_items=1)),
         "capabilities": Field(
-            Struct({"resume": Field(Bool()), "cost_usd": Field(Bool()), "effort": Field(Bool())})
+            Struct(
+                {
+                    key: Field(Bool())
+                    for key in ("resume", "cost_usd", "effort", *FEATURE_CAPABILITIES.values())
+                }
+            )
         ),
         "modes": Field(MapOf(Str())),
         "env": Field(ListOf(Str())),
@@ -234,6 +261,7 @@ class Turn:
         self.req = req
         self.emit = emit
         self.init: dict[str, Any] = {}  # the agent's `initialize` response
+        self.features: frozenset[str] | None = None  # None: no usable extension
         self.version: str | None = None
         self.session_id: str | None = None
         self.prompt: asyncio.Future[Any] | None = None
@@ -266,12 +294,17 @@ class Turn:
                     f"the agent speaks ACP version {init.get('protocolVersion')!r}; "
                     f"Whisperwind speaks {PROTOCOL_VERSION}"
                 )
-            opened = await self._open(conn, init.get("agentCapabilities") or {})
+            caps = init.get("agentCapabilities") or {}
+            self.features = self._extension(caps)
+            opened = await self._open(conn, caps)
             await self._configure(conn, opened)
-            self.prompt = conn.request(
-                "session/prompt",
-                {"sessionId": self.session_id, "prompt": [{"type": "text", "text": self._text()}]},
-            )
+            params: dict[str, Any] = {
+                "sessionId": self.session_id,
+                "prompt": [{"type": "text", "text": self._text()}],
+            }
+            if self.features is not None:
+                params["_meta"] = {EXTENSION: self._extension_request()}
+            self.prompt = conn.request("session/prompt", params)
             response = await asyncio.shield(self.prompt)
         except RpcError as exc:
             return self.rpc_failure(exc)
@@ -344,11 +377,61 @@ class Turn:
         else:
             self.emit(Log("warning", f"the agent has no mode {mode!r}; permission answers only"))
 
+    def _extension(self, caps: dict[str, Any]) -> frozenset[str] | None:
+        """The extension features the agent advertises, warning about declared
+        capabilities it does not back."""
+        meta = caps.get("_meta") or {}
+        advert = meta.get(EXTENSION) if isinstance(meta, dict) else None
+        features: frozenset[str] | None = None
+        if isinstance(advert, dict) and advert.get("version") in EXTENSION_VERSIONS:
+            features = frozenset(str(f) for f in advert.get("features") or [])
+        elif isinstance(advert, dict):
+            self.emit(
+                Log(
+                    "warning",
+                    f"the agent's {EXTENSION} extension version {advert.get('version')!r} "
+                    f"is not one Whisperwind knows ({', '.join(map(str, EXTENSION_VERSIONS))}); "
+                    "using plain ACP",
+                )
+            )
+        declared = self.adapter.spec.data.get("capabilities") or {}
+        for feature, capability in FEATURE_CAPABILITIES.items():
+            if declared.get(capability) and feature not in (features or ()):
+                self.emit(
+                    Log(
+                        "warning",
+                        f"the harness file declares {capability}, but the agent does not "
+                        f"advertise the {EXTENSION} extension's {feature} feature",
+                    )
+                )
+        return features
+
+    def _extension_request(self) -> dict[str, Any]:
+        req = self.req
+        values = {
+            "instructions": req.instructions,
+            "output_schema": req.output_schema,
+            "max_turns": req.max_turns,
+            "budget_usd": req.budget_usd,
+            "budget_tokens": req.budget_tokens,
+            "effort": req.effort,
+            "permissions": req.permissions,
+            "allow_tools": req.allow_tools or None,
+            "deny_tools": req.deny_tools or None,
+        }
+        return {key: value for key, value in values.items() if value is not None}
+
+    def _has(self, feature: str) -> bool:
+        return self.features is not None and feature in self.features
+
     def _text(self) -> str:
         req = self.req
-        if req.instructions:
-            return f"# Instructions\n\n{req.instructions}\n\n# Task\n\n{req.prompt}"
-        return req.prompt
+        text = req.prompt
+        if req.instructions and not self._has("instructions"):
+            text = f"# Instructions\n\n{req.instructions}\n\n# Task\n\n{text}"
+        if req.output_schema is not None and not self._has("output_schema"):
+            text += json_instruction(req.output_schema)
+        return text
 
     # -- what the agent sends -----------------------------------------------------------
 
@@ -417,19 +500,62 @@ class Turn:
         return max(self.total_usd - float(previous or 0.0), 0.0)
 
     def result(self, response: Any) -> AgentResult:
-        """The result for a prompt response."""
-        stop = (response or {}).get("stopReason") if isinstance(response, dict) else None
+        """The result for a prompt response: its stop reason decides, unless the
+        extension's result reports a more detailed outcome."""
+        response = response if isinstance(response, dict) else {}
+        stop = response.get("stopReason")
         result = self._base("succeeded")
-        if stop == "end_turn":
-            return result
-        if stop == "cancelled" and self.req.stop_reason is not None:
+        if self.req.output_schema is not None and not self._has("output_schema"):
+            result.output = extract_json(result.text)
+        stopped = stop == "cancelled" and self.req.stop_reason is not None
+        if stopped:
             result.outcome = "cancelled"
-            return result
-        result.outcome = "failed"
-        result.error = ErrorInfo(
-            "harness_error", f"the agent stopped: {stop}", {"stop_reason": stop}
-        )
+        elif stop != "end_turn":
+            result.outcome = "failed"
+            result.error = ErrorInfo(
+                "harness_error", f"the agent stopped: {stop}", {"stop_reason": stop}
+            )
+        meta = response.get("_meta")
+        extension = meta.get(EXTENSION) if isinstance(meta, dict) else None
+        if self.features is not None and isinstance(extension, dict):
+            self._refine(result, extension, outcome=not stopped)
         return result
+
+    def _refine(self, result: AgentResult, extension: dict[str, Any], outcome: bool) -> None:
+        """Fill the result from the extension's result payload."""
+        usage = extension.get("usage")
+        if isinstance(usage, dict):
+            keys = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens")
+            result.usage = Usage(**{key: int(usage.get(key) or 0) for key in keys})
+        cost = extension.get("cost_usd")
+        if result.cost_usd is None and isinstance(cost, (int, float)):
+            result.cost_usd = float(cost)  # a usage_update's cost wins
+        if isinstance(extension.get("num_turns"), int):
+            result.num_turns = extension["num_turns"]
+        if extension.get("model"):
+            result.model = str(extension["model"])
+        if "output" in extension:
+            result.output = extension["output"]
+        for denial in extension.get("permission_denials") or []:
+            if isinstance(denial, dict) and denial.get("tool"):
+                reason = str(denial.get("reason") or "")
+                result.permission_denials.append(Denial(str(denial["tool"]), reason))
+        reported = extension.get("outcome")
+        if not outcome or reported not in AGENT_OUTCOMES:
+            return
+        result.outcome = reported
+        error = extension.get("error")
+        if reported == "succeeded":
+            result.error = None
+        elif isinstance(error, dict):
+            detail = error.get("detail")
+            result.error = ErrorInfo(
+                str(error.get("kind") or "harness_error"),
+                str(error.get("message") or reported),
+                detail if isinstance(detail, dict) else {},
+            )
+        elif result.error is None:
+            result.error = ErrorInfo("harness_error", f"the agent reported {reported}")
 
     def _base(self, outcome: Any) -> AgentResult:
         return AgentResult(
@@ -501,13 +627,18 @@ class AcpAdapter(ProcessAdapter):
     def capabilities(self) -> Capabilities:
         declared = self.spec.data.get("capabilities") or {}
         return Capabilities(
+            structured_output=bool(declared.get("structured_output", False)),
             session_id="harness",
             resume=bool(declared.get("resume", False)),
             interactive="interactive_command" in self.spec.data,
             cost_usd=bool(declared.get("cost_usd", False)),
-            effort=bool(declared.get("effort", False)),
+            tokens=bool(declared.get("tokens", False)),
+            budget_cap=bool(declared.get("budget_cap", False)),
+            turn_cap=bool(declared.get("turn_cap", False)),
+            tool_rules=bool(declared.get("tool_rules", False)),
             permission_hook=True,
             streaming=True,
+            effort=bool(declared.get("effort", False)),
         )
 
     def command(self, req: AgentRequest) -> list[str]:

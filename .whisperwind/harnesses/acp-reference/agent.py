@@ -20,8 +20,18 @@ each prompt. Every key is optional:
       "modes": ["ask", "auto"],        # session modes, the first is current
       "modes_as_config": false,        # expose the modes as a `mode` config option
       "config_options": [{"id": "model", "category": "model", "values": ["small", "large"]}],
-      "turns": [{"when": "text in the prompt", "steps": [...], "stop": "end_turn"}]
+      "extension": {"version": 1, "features": ["output_schema", "usage", "outcome"]},
+      "turns": [{"when": "text in the prompt", "steps": [...], "stop": "end_turn",
+                 "result": {"outcome": "succeeded", "output": {...}}}]
     }
+
+`extension` advertises Whisperwind's ACP extension: Whisperwind then sends
+the node's settings under the prompt's `_meta.whisperwind` (instructions,
+output_schema, max_turns, budget_usd, budget_tokens, effort, permissions,
+allow_tools, deny_tools), and reads a turn's `result` back from the
+response's `_meta.whisperwind` (outcome, output, num_turns, model, usage,
+cost_usd, permission_denials, error). A real agent fills the result from its
+run; this one returns what the script says.
 
 The first turn whose `when` occurs in the prompt (or that has no `when`)
 answers it. Its steps run in order:
@@ -51,6 +61,7 @@ import uuid
 from typing import Any
 
 PROTOCOL_VERSION = 1
+EXTENSION = "whisperwind"
 AUTH_REQUIRED = -32000
 RESOURCE_NOT_FOUND = -32002
 METHOD_NOT_FOUND = -32601
@@ -58,7 +69,8 @@ INVALID_PARAMS = -32602
 DEFAULT_SCRIPT: dict[str, Any] = {
     "load_session": True,
     "resume": True,
-    "turns": [{"steps": [{"text": "ready"}]}],
+    "extension": {"version": 1, "features": ["outcome"]},
+    "turns": [{"steps": [{"text": "ready"}], "result": {"outcome": "succeeded", "num_turns": 1}}],
 }
 
 
@@ -141,6 +153,8 @@ class Agent:
             "promptCapabilities": {},
             "sessionCapabilities": session,
         }
+        if "extension" in script:
+            capabilities["_meta"] = {EXTENSION: script["extension"]}
         return {
             "protocolVersion": PROTOCOL_VERSION,
             "agentCapabilities": capabilities,
@@ -234,7 +248,12 @@ class Agent:
         history = self._history(session_id)
         history += [{"role": "user", "text": prompt}, {"role": "agent", "text": "".join(said)}]
         self._save(session_id, history)
-        return {"stopReason": "cancelled" if self.cancelled else turn.get("stop", "end_turn")}
+        response: dict[str, Any] = {
+            "stopReason": "cancelled" if self.cancelled else turn.get("stop", "end_turn")
+        }
+        if "extension" in self.script and "result" in turn:
+            response["_meta"] = {EXTENSION: turn["result"]}
+        return response
 
     def _step(self, session_id: str, step: dict[str, Any], said: list[str]) -> None:
         if "text" in step:

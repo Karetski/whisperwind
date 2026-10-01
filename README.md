@@ -178,12 +178,35 @@ interactive_command: [my-agent, --resume, "{session_id}"]
 - **Capabilities** are what the agent supports: resuming sessions (through `session/resume`, or `session/load` with history replay), reporting cost, and an effort setting. Undeclared ones are treated as missing.
 - **`model` and `effort`** are set through the agent's config options of category `model` and `thought_level`, when it has an option with that value. Otherwise a warning is logged and the agent uses its default.
 - **Permissions.** Each permission request is answered from the step's profile. `read-only` allows read, search, think and fetch tools; `edit` also allows edit, delete and move; `full` allows everything. A denial is recorded as a permission denial. Tools the agent approves on its own never ask, so `modes` also switches the agent to its mode for the profile.
-- **Instructions** come before the prompt. Structured output uses the JSON instruction and extraction every harness without native support gets. Budgets are enforced from the cost the agent reports. `max_turns` is not supported.
+- **Instructions** come before the prompt. Structured output uses the JSON instruction and extraction every harness without native support gets. Budgets are enforced from the cost the agent reports. `max_turns` is not supported. The Whisperwind extension below fills these gaps.
 - **Stopping.** Whisperwind sends `session/cancel` and waits the grace period for the agent to finish the turn, then stops the process.
 - `stream.jsonl` in each attempt keeps the whole conversation, both directions.
 - `whw adapters --probe` starts the agent to show its version and login methods.
 
-[`.whisperwind/harnesses/acp-reference/agent.py`](.whisperwind/harnesses/acp-reference/agent.py) is a reference ACP agent in plain Python, around a scripted model. Whisperwind's tests run against it, and it is a starting point for a harness of your own.
+**The Whisperwind ACP extension.** An agent you build yourself gets the full adapter contract, as the built-in adapters have it, by speaking ACP plus this extension. It travels in ACP's `_meta` fields under the key `whisperwind`, and every key is optional; an agent that ignores it still works as a plain ACP agent.
+
+1. **Advertise** it in the `initialize` response, under `agentCapabilities._meta.whisperwind`, with the extension version and the features you implement:
+
+   ```json
+   {"version": 1, "features": ["instructions", "output_schema", "max_turns", "budget", "usage", "tool_rules", "permissions", "outcome"]}
+   ```
+
+2. **Read the request.** Each `session/prompt` then carries the step's settings in `_meta.whisperwind`: `instructions`, `output_schema`, `max_turns`, `budget_usd`, `budget_tokens`, `effort`, `permissions` (the profile name), `allow_tools` and `deny_tools`. Keys the step doesn't set are left out. With the `instructions` feature, instructions come only here, not before the prompt; with `output_schema`, no JSON instruction is added to the prompt.
+3. **Report the result** in the `session/prompt` response's `_meta.whisperwind`:
+
+   ```json
+   {"outcome": "succeeded", "output": {"status": "done"}, "num_turns": 7, "model": "large-2",
+    "usage": {"input_tokens": 1200, "cached_input_tokens": 800, "output_tokens": 300, "reasoning_tokens": 40},
+    "cost_usd": 0.12, "permission_denials": [{"tool": "Bash", "reason": "not allowed"}],
+    "error": {"kind": "budget", "message": "the turn reached its budget"}}
+   ```
+
+   `outcome` is one of `succeeded`, `failed`, `budget_exceeded` or `schema_invalid`, and refines the stop reason. Whisperwind still decides `cancelled` and `timed_out`. `error` is read when the outcome is not `succeeded`.
+4. **Declare the capabilities** in the harness file's `capabilities`, since validation runs before any agent starts: `output_schema` backs `structured_output`, `max_turns` backs `turn_cap`, `budget` backs `budget_cap`, `usage` backs `tokens`, and `tool_rules` backs `tool_rules`. If the agent doesn't advertise a declared feature, a warning is logged; for structured output, Whisperwind falls back to the JSON instruction and extraction.
+
+Standard ACP fields win where both carry the same information; for example, a `usage_update` cost wins over `cost_usd`. Unknown keys are ignored in both directions. A breaking change to the extension bumps its version; an agent advertising a version Whisperwind doesn't know runs as plain ACP, with a warning.
+
+[`.whisperwind/harnesses/acp-reference/agent.py`](.whisperwind/harnesses/acp-reference/agent.py) is a reference ACP agent in plain Python, around a scripted model, that implements the extension. Whisperwind's tests run against it, and it is a starting point for a harness of your own.
 
 ## Commands
 
