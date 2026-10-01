@@ -1,0 +1,7 @@
+# The reference ACP agent (acp-reference/agent.py): a scripted model that speaks
+# the Agent Client Protocol v1. Copy this pair to start a harness of your own.
+name: acp-reference
+protocol: acp
+command: [python3, .whisperwind/harnesses/acp-reference/agent.py]
+capabilities: {resume: true}
+grace: 2s

@@ -1,7 +1,7 @@
 """Finding adapters by name.
 
-Names resolve in this order: built-in adapters, then command adapters declared
-in the project's `.whisperwind/harnesses/<name>.yaml`, then Python entry points in
+Names resolve in this order: built-in adapters, then command and ACP adapters
+declared in the project's `.whisperwind/harnesses/<name>.yaml`, then Python entry points in
 the `whisperwind.adapters` group. Entry points load only when a flow names them, so
 the CLI starts fast.
 """
@@ -61,17 +61,6 @@ def source(name: str, root: Path | None = None) -> str:
     return "unknown"
 
 
-def is_aap(name: str, root: Path | None = None) -> bool:
-    """A harness file declaring the Agent Adapter Protocol, which is not supported yet."""
-    path = _command_file(name, root)
-    if path is None:
-        return False
-    from whisperwind.yamlio import load_file
-
-    doc, _ = load_file(path)
-    return bool(doc and isinstance(doc.data, dict) and doc.data.get("protocol") == "aap")
-
-
 def file_problems(name: str, root: Path | None = None) -> list[Problem]:
     """Problems in a command adapter's harness file."""
     path = _command_file(name, root)
@@ -98,13 +87,16 @@ def load(name: str, root: Path | None = None) -> Adapter:
         return CodexAdapter()
     path = _command_file(name, root)
     if path is not None:
-        if is_aap(name, root):
-            raise UnknownAdapter(f"{name}: the Agent Adapter Protocol is not available yet")
         from whisperwind.adapters.command import CommandAdapter, load_spec
 
         spec, problems = load_spec(path)
         if spec is None:
             raise UnknownAdapter(f"{path}: {problems[0].message if problems else 'invalid'}")
+        if spec.protocol == "acp":
+            from whisperwind.adapters.acp import AcpAdapter
+
+            acp_adapter: Adapter = AcpAdapter(spec)
+            return acp_adapter
         command_adapter: Adapter = CommandAdapter(spec)
         return command_adapter
     entry = _entry_points().get(name)

@@ -154,9 +154,36 @@ Steps run one at a time; there is no parallelism.
 
 **Other agent CLIs**:
 
-- **Command adapters.** Add any agent CLI that prints JSON lines with a YAML file, `.whisperwind/harnesses/<name>.yaml`, which maps its command line and output events. No code needed.
+- **ACP agents.** Any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) v1 runs from a YAML file, `.whisperwind/harnesses/<name>.yaml`, with `protocol: acp`. Many agent CLIs speak it natively, and Claude Code and Codex speak it through wrappers. No code needed.
+- **Command adapters.** Add any agent CLI that prints JSON lines with the same kind of YAML file, which maps its command line and output events. No code needed.
 - **Python plugins.** A package can register an adapter under the `whisperwind.adapters` entry point.
 - **Conformance kit.** `whw adapter test <name>` checks an adapter against recorded streams. Add `--live` to check it against the real CLI, which costs money.
+
+Choose ACP when the agent speaks it: Whisperwind then answers the agent's permission requests, cancels a turn gracefully, and resumes sessions through the protocol. Choose a command adapter for a CLI that only prints JSON lines, and a plugin for anything else. The built-in `claude` and `codex` adapters get more than their ACP wrappers can carry: structured output, budget and turn caps, and detailed outcomes.
+
+An ACP harness file:
+
+```yaml
+name: my-agent
+protocol: acp
+command: [my-agent, --acp]        # starts the agent on stdio, one process per attempt
+env: [MY_AGENT_API_KEY]           # auth variables let into its environment
+tested_versions: ">=1.4"          # checked against the version the agent reports
+grace: 10s                        # how long a cancelled turn may take to stop
+capabilities: {resume: true, cost_usd: true, effort: true}
+modes: {read-only: plan, edit: default, full: yolo}   # the agent's own mode IDs
+interactive_command: [my-agent, --resume, "{session_id}"]
+```
+
+- **Capabilities** are what the agent supports: resuming sessions (through `session/resume`, or `session/load` with history replay), reporting cost, and an effort setting. Undeclared ones are treated as missing.
+- **`model` and `effort`** are set through the agent's config options of category `model` and `thought_level`, when it has an option with that value. Otherwise a warning is logged and the agent uses its default.
+- **Permissions.** Each permission request is answered from the step's profile. `read-only` allows read, search, think and fetch tools; `edit` also allows edit, delete and move; `full` allows everything. A denial is recorded as a permission denial. Tools the agent approves on its own never ask, so `modes` also switches the agent to its mode for the profile.
+- **Instructions** come before the prompt. Structured output uses the JSON instruction and extraction every harness without native support gets. Budgets are enforced from the cost the agent reports. `max_turns` is not supported.
+- **Stopping.** Whisperwind sends `session/cancel` and waits the grace period for the agent to finish the turn, then stops the process.
+- `stream.jsonl` in each attempt keeps the whole conversation, both directions.
+- `whw adapters --probe` starts the agent to show its version and login methods.
+
+[`.whisperwind/harnesses/acp-reference/agent.py`](.whisperwind/harnesses/acp-reference/agent.py) is a reference ACP agent in plain Python, around a scripted model. Whisperwind's tests run against it, and it is a starting point for a harness of your own.
 
 ## Commands
 

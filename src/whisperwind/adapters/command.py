@@ -5,6 +5,9 @@ gives the command line, how to send the prompt, how to resume, and expressions
 (the expression language, with `event` bound to each parsed line) that pick the session ID,
 text, usage, result and errors out of the stream. Placeholders are substituted
 per argv element, never through a shell.
+
+Harness files with `protocol: acp` are loaded here too; the ACP adapter
+(`acp.py`) runs them.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ MAPPING = Struct({"when": Field(Str(), required=True), "value": Field(Str(), req
 HARNESS_FILE = Struct(
     {
         "name": Field(Str(pattern=r"^[a-z][a-z0-9_-]*$"), required=True),
-        "protocol": Field(Str(enum=("command", "aap"))),
+        "protocol": Field(Str(enum=("command",))),
         "command": Field(ListOf(Str(), min_items=1), required=True),
         "prompt_via": Field(Str(enum=("argv", "stdin", "file"))),
         "resume_command": Field(ListOf(Str(), min_items=1)),
@@ -125,6 +128,10 @@ class HarnessSpec:
     def name(self) -> str:
         return str(self.data["name"])
 
+    @property
+    def protocol(self) -> str:
+        return str(self.data.get("protocol", "command"))
+
 
 def harness_dir(root: Path) -> Path:
     return root / ".whisperwind" / "harnesses"
@@ -153,7 +160,14 @@ def load_spec(path: Path) -> tuple[HarnessSpec | None, list[Problem]]:
     data = doc.data if isinstance(doc.data, dict) else {}
     if not isinstance(doc.data, dict):
         return None, [doc.problem("E-SCHEMA", "a harness file must be a mapping", "")]
-    for code, message, pointer, is_key in HARNESS_FILE.check(data, ""):
+    acp = data.get("protocol") == "acp"
+    if acp:
+        from whisperwind.adapters.acp import ACP_HARNESS_FILE
+
+        schema = ACP_HARNESS_FILE
+    else:
+        schema = HARNESS_FILE
+    for code, message, pointer, is_key in schema.check(data, ""):
         problems.append(doc.problem(code, message, pointer, key=is_key))
     if problems:
         return None, problems
@@ -161,7 +175,9 @@ def load_spec(path: Path) -> tuple[HarnessSpec | None, list[Problem]]:
         problems.append(
             doc.problem("E-SCHEMA", f"name must match the file name ({path.stem})", "/name")
         )
-    for key in ("command", "resume_command", "interactive_command"):
+    # An ACP agent's command line is used as written.
+    templates = ("command", "resume_command", "interactive_command")
+    for key in templates[2:] if acp else templates:
         for index, element in enumerate(data.get(key) or []):
             for name in _PLACEHOLDER.findall(element):
                 if name not in PLACEHOLDERS:
@@ -172,17 +188,18 @@ def load_spec(path: Path) -> tuple[HarnessSpec | None, list[Problem]]:
                             join_pointer(f"/{key}", index),
                         )
                     )
-    for profile in data.get("permissions") or {}:
-        if profile not in PROFILES:
-            problems.append(
-                doc.problem(
-                    "E-SCHEMA",
-                    f"unknown permission profile {profile!r}",
-                    f"/permissions/{profile}",
-                    key=True,
+    for section in ("permissions", "modes"):
+        for profile in data.get(section) or {}:
+            if profile not in PROFILES:
+                problems.append(
+                    doc.problem(
+                        "E-SCHEMA",
+                        f"unknown permission profile {profile!r}",
+                        f"/{section}/{profile}",
+                        key=True,
+                    )
                 )
-            )
-    expressions = _parse_expressions(doc, data, problems)
+    expressions = {} if acp else _parse_expressions(doc, data, problems)
     if any(p.is_error for p in problems):
         return None, problems
     return HarnessSpec(path, data, expressions), problems
@@ -402,9 +419,11 @@ class CommandStream(StreamParser):
 
 
 def harness_json_schema() -> dict[str, Any]:
+    from whisperwind.adapters.acp import ACP_HARNESS_FILE
+
     return {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "$id": "https://github.com/Karetski/whisperwind/schemas/harness-1.json",
-        "title": "Whisperwind command adapter",
-        **HARNESS_FILE.json_schema(),
+        "title": "Whisperwind harness file",
+        "anyOf": [HARNESS_FILE.json_schema(), ACP_HARNESS_FILE.json_schema()],
     }

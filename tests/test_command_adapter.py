@@ -181,19 +181,3 @@ def test_given_malformed_harness_file_when_a_flow_is_validated_then_its_problems
     found = [(p.code, Path(p.file or "").name, p.line) for p in report.errors]
     assert ("E-SCHEMA", "bad.yaml", 2) in found
     assert ("E-EXPR-SYNTAX", "bad.yaml", 4) in found
-
-
-def test_given_aap_harness_when_validated_then_it_is_not_implemented(tmp_path: Path) -> None:
-    # Given
-    harnesses = tmp_path / ".whisperwind" / "harnesses"
-    harnesses.mkdir(parents=True)
-    (harnesses / "ext.yaml").write_text("name: ext\nprotocol: aap\ncommand: [ext]\nstream: {}\n")
-    (tmp_path / "flow.yaml").write_text(
-        "name: f\nnodes:\n  a: {type: agent, harness: ext, prompt: Hi.}\n"
-    )
-
-    # When
-    report = validate(tmp_path / "flow.yaml")
-
-    # Then
-    assert [p.code for p in report.errors] == ["E-NOT-IMPLEMENTED"]

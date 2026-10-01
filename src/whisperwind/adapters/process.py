@@ -188,9 +188,13 @@ class ProcessAdapter:
             emit(Log("warning", f"{self.name} {version} is outside tested_versions {tested}"))
         return result
 
-    async def _stop(self, process: asyncio.subprocess.Process) -> str:
+    async def _stop(
+        self, process: asyncio.subprocess.Process, interrupt_wait: float | None = None
+    ) -> str:
+        """SIGINT, SIGTERM, then SIGKILL to the process group. SIGINT waits the
+        grace period unless `interrupt_wait` says otherwise."""
         for sig, wait, name in (
-            (signal.SIGINT, self.grace, "sigint"),
+            (signal.SIGINT, self.grace if interrupt_wait is None else interrupt_wait, "sigint"),
             (signal.SIGTERM, TERM_WAIT_S, "sigterm"),
         ):
             with contextlib.suppress(ProcessLookupError, PermissionError):

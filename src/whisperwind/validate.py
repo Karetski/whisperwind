@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from whisperwind.adapters.registry import PENDING as PENDING_ADAPTERS
-from whisperwind.adapters.registry import is_aap
 from whisperwind.checks import (
     expression_checks,
     graph_checks,
@@ -83,7 +82,7 @@ def validate(
             lambda: lint_checks(flow, graph, risky),
         ]
         if implementation_gate:
-            stages.append(lambda: _not_implemented(flow, root))
+            stages.append(lambda: _not_implemented(flow))
         for stage in stages:
             found = stage()
             problems += found
@@ -97,7 +96,7 @@ def validate(
 PENDING_FEATURES: dict[tuple[str, object], str] = {}
 
 
-def _not_implemented(flow: Flow, root: Path | None = None) -> list[Problem]:
+def _not_implemented(flow: Flow) -> list[Problem]:
     problems = []
     for node in flow.nodes.values():
         if node.type not in IMPLEMENTED_NODE_TYPES:
@@ -115,13 +114,6 @@ def _not_implemented(flow: Flow, root: Path | None = None) -> list[Problem]:
                 node.where("harness").problem(
                     "E-NOT-IMPLEMENTED",
                     f"the {harness} adapter is not available in this version of Whisperwind",
-                )
-            )
-        elif node.type == "agent" and isinstance(harness, str) and is_aap(harness, root):
-            problems.append(
-                node.where("harness").problem(
-                    "E-NOT-IMPLEMENTED",
-                    f"{harness} uses the Agent Adapter Protocol, which is not available yet",
                 )
             )
         for (key, value), what in PENDING_FEATURES.items():

@@ -589,7 +589,7 @@ def harness_checks(
             )
             continue
         problems += _session_source(flow, node)
-        if harness in registry.PENDING or registry.is_aap(harness, root):
+        if harness in registry.PENDING:
             continue  # reported as E-NOT-IMPLEMENTED by the last stage
         file_problems = registry.file_problems(harness, root)
         problems += file_problems

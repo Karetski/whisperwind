@@ -195,7 +195,7 @@ def cmd_adapters(args: argparse.Namespace) -> int:
                 "found": probe.found,
                 "version": probe.version,
                 "in_tested_range": probe.in_tested_range,
-                "auth": _auth_hint(name),
+                "auth": _auth_hint(name) or probe.auth_hint,
             }
         found.append(item)
     if args.json:
