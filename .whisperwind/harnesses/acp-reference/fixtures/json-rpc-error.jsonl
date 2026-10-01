@@ -1,0 +1,6 @@
+{"from": "client", "message": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1, "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false}, "clientInfo": {"name": "whisperwind", "version": "0.1.0"}}}}
+{"from": "agent", "message": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1, "agentCapabilities": {"loadSession": false, "promptCapabilities": {}, "sessionCapabilities": {}}, "authMethods": [], "agentInfo": {"name": "acp-reference", "version": "1.0.0"}}}}
+{"from": "client", "message": {"jsonrpc": "2.0", "id": 2, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}}}
+{"from": "agent", "message": {"jsonrpc": "2.0", "id": 2, "result": {"sessionId": "89120eb2-90bd-4425-9c16-526472ec7478", "configOptions": []}}}
+{"from": "client", "message": {"jsonrpc": "2.0", "id": 3, "method": "session/prompt", "params": {"sessionId": "89120eb2-90bd-4425-9c16-526472ec7478", "prompt": [{"type": "text", "text": "Conformance test prompt."}]}}}
+{"from": "agent", "message": {"jsonrpc": "2.0", "id": 3, "error": {"code": -32603, "message": "model overloaded"}}}

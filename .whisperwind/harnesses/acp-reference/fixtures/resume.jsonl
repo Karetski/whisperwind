@@ -1,0 +1,6 @@
+{"from": "client", "message": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1, "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false}, "clientInfo": {"name": "whisperwind", "version": "0.1.0"}}}}
+{"from": "agent", "message": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1, "agentCapabilities": {"loadSession": true, "promptCapabilities": {}, "sessionCapabilities": {"resume": {}}}, "authMethods": [], "agentInfo": {"name": "acp-reference", "version": "1.0.0"}}}}
+{"from": "client", "message": {"jsonrpc": "2.0", "id": 2, "method": "session/resume", "params": {"cwd": "/work", "mcpServers": [], "sessionId": "8966d759-90a2-448c-b768-55807831b04e"}}, "match": ["/params/sessionId"]}
+{"from": "agent", "message": {"jsonrpc": "2.0", "id": 2, "result": {"configOptions": []}}}
+{"from": "client", "message": {"jsonrpc": "2.0", "id": 3, "method": "session/prompt", "params": {"sessionId": "8966d759-90a2-448c-b768-55807831b04e", "prompt": [{"type": "text", "text": "Conformance test prompt."}]}}}
+{"from": "agent", "message": {"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "end_turn"}}}

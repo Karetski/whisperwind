@@ -161,6 +161,9 @@ class Connection:
         """Send a request; the future resolves to its result, or fails with
         RpcError or ConnectionLost."""
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        # A failure nobody is waiting for any more (a cancelled attempt's
+        # prompt) is expected, not an unretrieved error.
+        future.add_done_callback(lambda done: done.cancelled() or done.exception())
         if self.closed:
             future.set_exception(ConnectionLost())
             return future
@@ -239,6 +242,30 @@ class Connection:
                 future.set_result(message.get("result"))
 
 
+def features(init: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+    """What an agent supports, from its `initialize` and `session/new` responses."""
+    caps = init.get("agentCapabilities") or {}
+    session_caps = caps.get("sessionCapabilities") or {}
+    options = [o for o in session.get("configOptions") or [] if isinstance(o, dict)]
+
+    def values(category: str) -> list[str]:
+        return [v for o in options if o.get("category") == category for v in _options(o)]
+
+    modes = (session.get("modes") or {}).get("availableModes") or []
+    meta = caps.get("_meta") or {}
+    extension = meta.get(EXTENSION) if isinstance(meta, dict) else None
+    return {
+        "agent": init.get("agentInfo"),
+        "resume": session_caps.get("resume") is not None,
+        "load": bool(caps.get("loadSession")),
+        "additional_directories": session_caps.get("additionalDirectories") is not None,
+        "models": values("model"),
+        "efforts": values("thought_level"),
+        "modes": [str(m.get("id")) for m in modes if isinstance(m, dict)] + values("mode"),
+        "extension": extension if isinstance(extension, dict) else None,
+    }
+
+
 def _options(option: dict[str, Any]) -> list[str]:
     """The values of a select config option, flat or grouped."""
     values = []
@@ -305,7 +332,10 @@ class Turn:
             if self.features is not None:
                 params["_meta"] = {EXTENSION: self._extension_request()}
             self.prompt = conn.request("session/prompt", params)
-            response = await asyncio.shield(self.prompt)
+            # Waiting, unlike awaiting, leaves the request pending when this task
+            # is cancelled, so the cancel path can still collect its response.
+            await asyncio.wait({self.prompt})
+            response = self.prompt.result()
         except RpcError as exc:
             return self.rpc_failure(exc)
         return self.result(response)
@@ -664,16 +694,21 @@ class AcpAdapter(ProcessAdapter):
             **kwargs,
         )
 
-    async def probe(self) -> Probe:
-        """Start the agent, `initialize` it and stop it."""
+    async def handshake(
+        self, cwd: str | None = None, env: dict[str, str] | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """Start the agent, `initialize` it and, given a `cwd`, open a session
+        there without prompting; then stop it. The `initialize` and `session/new`
+        responses, empty where the agent did not answer; None when it cannot start."""
         try:
-            process = await self._spawn(self._argv())
+            process = await self._spawn(self._argv(), cwd=cwd, env=env)
         except OSError:
-            return Probe(found=False)
+            return None
+        init: Any = None
+        session: Any = None
         with open(os.devnull, "w") as sink:
             conn = Connection(process, sink, _refuse, lambda method, params: None, lambda e: None)
             serving = asyncio.ensure_future(conn.serve())
-            init: Any = None
             with contextlib.suppress(RpcError, ConnectionLost, asyncio.TimeoutError):
                 init = await asyncio.wait_for(
                     conn.call(
@@ -682,9 +717,25 @@ class AcpAdapter(ProcessAdapter):
                     ),
                     PROBE_TIMEOUT_S,
                 )
+                if cwd is not None:
+                    session = await asyncio.wait_for(
+                        conn.call("session/new", {"cwd": cwd, "mcpServers": []}),
+                        PROBE_TIMEOUT_S,
+                    )
             await self._end(process, conn)
             await asyncio.gather(serving, return_exceptions=True)
-        if not isinstance(init, dict):
+        return (
+            init if isinstance(init, dict) else {},
+            session if isinstance(session, dict) else {},
+        )
+
+    async def probe(self) -> Probe:
+        """Start the agent, `initialize` it and stop it."""
+        shaken = await self.handshake()
+        if shaken is None:
+            return Probe(found=False)
+        init = shaken[0]
+        if not init:
             return Probe(found=True, source=str(self.spec.path))
         version = (init.get("agentInfo") or {}).get("version")
         tested = self.settings.get("tested_versions")
@@ -743,8 +794,7 @@ class AcpAdapter(ProcessAdapter):
         prompt = turn.prompt
         if prompt is not None and not prompt.done():
             conn.notify("session/cancel", {"sessionId": turn.session_id})
-            with contextlib.suppress(asyncio.TimeoutError, RpcError, ConnectionLost):
-                await asyncio.wait_for(asyncio.shield(prompt), self.grace)
+            await asyncio.wait({prompt}, timeout=self.grace)
         if prompt is not None and prompt.done():
             failure = prompt.exception()
             if failure is None:

@@ -157,7 +157,7 @@ Steps run one at a time; there is no parallelism.
 - **ACP agents.** Any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) v1 runs from a YAML file, `.whisperwind/harnesses/<name>.yaml`, with `protocol: acp`. Many agent CLIs speak it natively, and Claude Code and Codex speak it through wrappers. No code needed.
 - **Command adapters.** Add any agent CLI that prints JSON lines with the same kind of YAML file, which maps its command line and output events. No code needed.
 - **Python plugins.** A package can register an adapter under the `whisperwind.adapters` entry point.
-- **Conformance kit.** `whw adapter test <name>` checks an adapter against recorded streams. Add `--live` to check it against the real CLI, which costs money.
+- **Conformance kit.** `whw adapter test <name>` checks an adapter against recorded streams. Add `--live` to check it against the real CLI, which costs money. See [Conformance fixtures](#conformance-fixtures).
 
 Choose ACP when the agent speaks it: Whisperwind then answers the agent's permission requests, cancels a turn gracefully, and resumes sessions through the protocol. Choose a command adapter for a CLI that only prints JSON lines, and a plugin for anything else. The built-in `claude` and `codex` adapters get more than their ACP wrappers can carry: structured output, budget and turn caps, and detailed outcomes.
 
@@ -207,6 +207,27 @@ interactive_command: [my-agent, --resume, "{session_id}"]
 Standard ACP fields win where both carry the same information; for example, a `usage_update` cost wins over `cost_usd`. Unknown keys are ignored in both directions. A breaking change to the extension bumps its version; an agent advertising a version Whisperwind doesn't know runs as plain ACP, with a warning.
 
 [`.whisperwind/harnesses/acp-reference/agent.py`](.whisperwind/harnesses/acp-reference/agent.py) is a reference ACP agent in plain Python, around a scripted model, that implements the extension. Whisperwind's tests run against it, and it is a starting point for a harness of your own.
+
+### Conformance fixtures
+
+A command or ACP harness keeps its fixtures in `.whisperwind/harnesses/<name>/fixtures/`. Each case is a recording, `<case>.jsonl`, and `expected.yaml` lists the result each case must produce:
+
+```yaml
+cases:
+  permission-denied:
+    permissions: edit             # the request: also `schema`, and `resume` (a session ID)
+    outcome: succeeded            # the result: also error_kind, session_id, text, output,
+    permission_denials: [Run rm -rf build]   # cost_usd, usage, num_turns, stopped_by
+  cancel:
+    stop: cancel                  # cancel (or `timeout`) at the agent's first text
+    outcome: cancelled
+```
+
+- **Command adapters** replay a recorded JSON-lines stream through the adapter.
+- **ACP adapters** replay a two-way transcript: a stub agent stands in for the real one, checks each message the client sends against the transcript, and sends the agent's recorded messages back. The transcript has the format of the `stream.jsonl` each ACP attempt saves, so a real attempt's stream is a candidate fixture. A client message must have the recorded method, or answer the recorded request. Add `"match": ["/params/sessionId"]` to a line to also compare the values at those JSON pointers. A `{"from": "agent", "exit": 1}` line makes the agent exit there. When a message doesn't match, the case fails and says where.
+- **`--live`** runs a small flow through the real harness with a spend cap. For an ACP harness, it also checks that a cancelled turn ends within the grace period, and reports which features the agent supports: resume, load, extra directories, model, effort and mode options, and the Whisperwind extension.
+
+The reference agent's fixtures in [`.whisperwind/harnesses/acp-reference/fixtures`](.whisperwind/harnesses/acp-reference/fixtures) cover each case an ACP harness should handle. Run them with `whw adapter test acp-reference`.
 
 ## Commands
 

@@ -166,7 +166,8 @@ DATA: dict[str, dict[str, Any]] = {
         {
             "adapter": STR,
             "cases": array(obj({"case": STR, "passed": BOOL, "problems": array(STR)})),
-        }
+        },
+        {"features": {"type": "object"}},
     ),
 }
 

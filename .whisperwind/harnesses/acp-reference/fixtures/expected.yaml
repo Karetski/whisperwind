@@ -1,0 +1,60 @@
+# Normalized results each transcript must produce; `whw adapter test acp-reference`
+# replays them. The transcripts were recorded from the reference agent: each is
+# the stream.jsonl of one attempt, with `match` pointers added to the client
+# messages whose content the case checks.
+cases:
+  success:
+    outcome: succeeded
+    session_id: 53a3f192-f00b-44d3-a353-c6dc363ffba0
+    text: The README has a title.
+    cost_usd: 0.0123
+  resume:
+    resume: 8966d759-90a2-448c-b768-55807831b04e
+    outcome: succeeded
+    session_id: 8966d759-90a2-448c-b768-55807831b04e
+  permission-allowed:
+    permissions: edit
+    outcome: succeeded
+    text: Edited.
+    permission_denials: []
+  permission-denied:
+    permissions: edit
+    outcome: succeeded
+    text: Skipped.
+    permission_denials: [Run rm -rf build]
+  cancel:
+    stop: cancel
+    outcome: cancelled
+    text: Working
+    stopped_by: null
+  cancel-ignored:
+    stop: cancel
+    outcome: cancelled
+    error_kind: no_result
+    stopped_by: sigint
+  exit-without-response:
+    outcome: failed
+    error_kind: no_result
+    text: Starting
+  auth-required:
+    outcome: failed
+    error_kind: harness_error
+  json-rpc-error:
+    outcome: failed
+    error_kind: harness_error
+  # With the Whisperwind extension.
+  structured-output:
+    schema: {type: object, required: [word], properties: {word: {type: string}}}
+    outcome: succeeded
+    output: {word: kiwi}
+  schema-failure:
+    schema: {type: object, required: [word], properties: {word: {type: string}}}
+    outcome: schema_invalid
+    error_kind: schema
+  budget-stop:
+    outcome: budget_exceeded
+    error_kind: budget
+  usage-and-turns:
+    outcome: succeeded
+    num_turns: 3
+    usage: {input_tokens: 1500, cached_input_tokens: 900, output_tokens: 120, reasoning_tokens: 30}

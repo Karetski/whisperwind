@@ -3,8 +3,15 @@
 Offline (default), it replays recorded streams and compares the normalized
 results with each fixture set's `expected.yaml`: built-in adapters parse the
 streams directly; command adapters run their real process path against a stub
-executable that replays the stream. Live (`--live`, opt-in, spends money), it
-runs a few small prompts through a real harness with a spend cap.
+executable that replays the stream. ACP adapters run theirs against a stub
+agent that replays a two-way transcript, checking each message the client
+sends against it. Live (`--live`, opt-in, spends money), it runs a few small
+prompts through a real harness with a spend cap.
+
+Besides the expected result, a case in `expected.yaml` may set the request:
+`schema` (an output schema), `permissions` (a profile) and `resume` (a session
+ID to resume). `stop: cancel` or `stop: timeout` stops the attempt at its first
+text, for cancellation cases.
 """
 
 from __future__ import annotations
@@ -19,11 +26,21 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
-from whisperwind.adapters import AgentRequest, AgentResult, SessionSpec, registry
+from whisperwind.adapters import (
+    AdapterEvent,
+    AgentRequest,
+    AgentResult,
+    SessionSpec,
+    Text,
+    registry,
+)
+from whisperwind.adapters.acp import AcpAdapter, features
 from whisperwind.adapters.process import ProcessAdapter, parse_lines
+from whisperwind.store.events import read_log
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 REPLAY = Path(__file__).parent / "replay.py"
+ACP_REPLAY = Path(__file__).parent / "acp_replay.py"
 SESSION = "11111111-2222-4333-8444-555555555555"
 
 
@@ -50,7 +67,9 @@ def fixture_dirs(name: str, root: Path | None) -> list[Path]:
     return sorted(p for p in FIXTURES_DIR.glob(f"{name}-*") if p.is_dir())
 
 
-def _request(attempt_dir: Path, schema: Any = None) -> AgentRequest:
+def _request(attempt_dir: Path, case: dict[str, Any]) -> AgentRequest:
+    resume = case.get("resume")
+    session = SessionSpec("resume", str(resume)) if resume else SessionSpec("new", None, SESSION)
     return AgentRequest(
         run_id="conformance",
         node_id="case",
@@ -62,11 +81,11 @@ def _request(attempt_dir: Path, schema: Any = None) -> AgentRequest:
         add_dirs=[],
         model=None,
         effort=None,
-        permissions="edit",
+        permissions=str(case.get("permissions", "edit")),
         allow_tools=[],
         deny_tools=[],
-        output_schema=schema,
-        session=SessionSpec("new", None, SESSION),
+        output_schema=case.get("schema"),
+        session=session,
         max_turns=None,
         budget_usd=None,
         budget_tokens=None,
@@ -89,7 +108,7 @@ def compare(result: AgentResult, expected: dict[str, Any]) -> list[str]:
         check("outcome", result.outcome, expected["outcome"])
     if "error_kind" in expected:
         check("error kind", result.error.kind if result.error else None, expected["error_kind"])
-    for key in ("session_id", "text", "output"):
+    for key in ("session_id", "text", "output", "num_turns", "stopped_by"):
         if key in expected:
             check(key, getattr(result, key), expected[key])
     if "cost_usd" in expected:
@@ -124,32 +143,56 @@ def run_offline(name: str, root: Path | None) -> list[CaseResult]:
             if not stream.exists():
                 results.append(CaseResult(label, False, [f"missing {stream.name}"]))
                 continue
+            problems: list[str] = []
             with tempfile.TemporaryDirectory() as tmp:
-                req = _request(Path(tmp), wanted.get("schema"))
+                req = _request(Path(tmp), wanted)
                 if command_adapter:
-                    result = asyncio.run(_replay(adapter, req, stream))  # type: ignore[arg-type]
+                    assert isinstance(adapter, ProcessAdapter)
+                    result = asyncio.run(_replay(adapter, req, stream, wanted.get("stop")))
+                    report = Path(tmp) / "replay-mismatch.txt"
+                    if report.exists():
+                        problems.append(f"transcript: {report.read_text()}")
                 else:
                     assert isinstance(adapter, ProcessAdapter)
                     parser = adapter.parser(req)
                     parse_lines(parser, stream.read_text().splitlines())
                     result = parser.finish(req, 0, "")
-            problems = compare(result, wanted)
+            problems += compare(result, wanted)
             results.append(CaseResult(label, not problems, problems))
     return results
 
 
-async def _replay(adapter: ProcessAdapter, req: AgentRequest, stream: Path) -> AgentResult:
+async def _replay(
+    adapter: ProcessAdapter, req: AgentRequest, stream: Path, stop: str | None
+) -> AgentResult:
     """Run the adapter's real process path with its program replaced by a stub
-    that replays `stream`."""
+    that replays `stream`. With `stop`, the attempt is stopped at its first text."""
     original = adapter.command
+    report = Path(req.attempt_dir) / "replay-mismatch.txt"
 
     def command(request: AgentRequest) -> list[str]:
+        if isinstance(adapter, AcpAdapter):
+            return [sys.executable, str(ACP_REPLAY), str(stream), str(report)]
         argv = original(request)
         return [sys.executable, str(REPLAY), str(stream), "--", *argv[1:]]
 
+    texted = asyncio.Event()
+
+    def emit(event: AdapterEvent) -> None:
+        if isinstance(event, Text):
+            texted.set()
+
     adapter.command = command  # type: ignore[method-assign, assignment]
     try:
-        return await adapter.run(req, lambda event: None)
+        task = asyncio.ensure_future(adapter.run(req, emit))
+        if stop is not None:
+            waiter = asyncio.ensure_future(texted.wait())
+            await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+            waiter.cancel()
+            if not task.done():
+                req.stop_reason = "timeout" if stop == "timeout" else "cancel"
+                task.cancel()
+        return await task
     finally:
         adapter.command = original  # type: ignore[method-assign]
 
@@ -207,11 +250,23 @@ def run_live(name: str, root: Path | None, environ: dict[str, str]) -> list[Case
         run = create_run(flow, {}, config=config, clock=Clock(), workdir=project)
         outcome = asyncio.run(Runner(run, config, Clock(), environ=environ, heartbeat=False).run())
         nodes = outcome.state["nodes"]
+        stopped_by = {
+            e["node"]: e["data"].get("stopped_by")
+            for e in read_log(run.events).events
+            if e["type"] == "attempt_finished"
+        }
     first, second, slow = (
         nodes.get("first") or {},
         nodes.get("second") or {},
         nodes.get("slow") or {},
     )
+    acp = [
+        _live_case(
+            "cancel answered within grace",
+            slow.get("outcome") == "timed_out" and stopped_by.get("slow") is None,
+            f"the process was stopped with {stopped_by.get('slow')}",
+        )
+    ]
     return [
         _live_case("session id", bool(first.get("session_id")), f"got {first.get('session_id')!r}"),
         _live_case(
@@ -228,7 +283,19 @@ def run_live(name: str, root: Path | None, environ: dict[str, str]) -> list[Case
         _live_case(
             "stop within grace", slow.get("outcome") == "timed_out", f"got {slow.get('outcome')!r}"
         ),
+        *(acp if isinstance(registry.load(name, root), AcpAdapter) else []),
     ]
+
+
+def live_features(name: str, root: Path | None, environ: dict[str, str]) -> dict[str, Any] | None:
+    """For an ACP adapter, what the agent supports, from a handshake that opens
+    a session without prompting it; None for other adapters."""
+    adapter = registry.load(name, root)
+    if not isinstance(adapter, AcpAdapter):
+        return None
+    cwd = str((root or Path.cwd()).resolve())
+    shaken = asyncio.run(adapter.handshake(cwd, dict(environ)))
+    return features(*shaken) if shaken is not None else None
 
 
 def _live_case(case: str, ok: bool, detail: str) -> CaseResult:

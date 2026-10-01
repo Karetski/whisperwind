@@ -66,11 +66,19 @@ AUTH_REQUIRED = -32000
 RESOURCE_NOT_FOUND = -32002
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
+# Without --script: answers the prompts of the conformance kit's live suite
+# (`whw adapter test acp-reference --live`), which then passes at no cost.
 DEFAULT_SCRIPT: dict[str, Any] = {
     "load_session": True,
     "resume": True,
     "extension": {"version": 1, "features": ["outcome"]},
-    "turns": [{"steps": [{"text": "ready"}], "result": {"outcome": "succeeded", "num_turns": 1}}],
+    "turns": [
+        {"when": "Count slowly", "steps": [{"text": "1\n"}, {"wait_for_cancel": True}]},
+        {
+            "steps": [{"text": '{"word": "ready"}'}],
+            "result": {"outcome": "succeeded", "num_turns": 1},
+        },
+    ],
 }
 
 

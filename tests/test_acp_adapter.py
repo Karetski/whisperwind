@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -707,3 +708,109 @@ def test_given_max_turns_when_validated_then_the_declared_capability_decides(
     # Then
     ignored = [p.message for p in report.problems if p.code == "W-IGNORED-OPTION"]
     assert (ignored == ["the ref adapter ignores max_turns"]) is warned
+
+
+# -- the conformance kit ------------------------------------------------------------------
+
+ROOT = Path(__file__).parent.parent
+REFERENCE_CASES = [
+    "success",
+    "resume",
+    "permission-allowed",
+    "permission-denied",
+    "cancel",
+    "cancel-ignored",
+    "exit-without-response",
+    "auth-required",
+    "json-rpc-error",
+    "structured-output",
+    "schema-failure",
+    "budget-stop",
+    "usage-and-turns",
+]
+
+
+def reference_project(tmp_path: Path) -> Path:
+    """A project holding a copy of the reference agent's harness and fixtures."""
+    shutil.copytree(ROOT / ".whisperwind" / "harnesses", tmp_path / ".whisperwind" / "harnesses")
+    return tmp_path / ".whisperwind" / "harnesses" / "acp-reference" / "fixtures"
+
+
+def adapter_test(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *args: str
+) -> tuple[int, dict[str, Any]]:
+    monkeypatch.chdir(project)
+    code = cli.main(["adapter", "test", "acp-reference", "--json", *args])
+    document: dict[str, Any] = json.loads(capsys.readouterr().out)
+    return code, document
+
+
+def test_given_reference_agent_fixtures_when_kit_runs_then_every_case_passes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # When
+    code, document = adapter_test(ROOT, monkeypatch, capsys)
+
+    # Then
+    assert code == 0, document
+    assert [c["case"] for c in document["data"]["cases"]] == [
+        f"fixtures/{case}" for case in REFERENCE_CASES
+    ]
+
+
+def test_given_client_message_off_the_transcript_when_kit_runs_then_the_case_says_where(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Given: under `full`, the client allows the tool the transcript recorded it rejecting
+    expected = reference_project(tmp_path) / "expected.yaml"
+    expected.write_text("cases:\n  permission-denied: {permissions: full, outcome: succeeded}\n")
+
+    # When
+    code, document = adapter_test(tmp_path, monkeypatch, capsys)
+
+    # Then
+    assert code == 1
+    [case] = document["error"]["details"]["cases"]
+    assert case["problems"][0] == (
+        "transcript: response to request 2: /result/outcome expected "
+        "{'outcome': 'selected', 'optionId': 'reject'}, "
+        "got {'outcome': 'selected', 'optionId': 'allow'}"
+    )
+
+
+def test_given_wrong_expectation_when_kit_replays_a_transcript_then_the_field_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Given
+    expected = reference_project(tmp_path) / "expected.yaml"
+    expected.write_text("cases:\n  success: {outcome: succeeded, text: nope}\n")
+
+    # When
+    code, document = adapter_test(tmp_path, monkeypatch, capsys)
+
+    # Then
+    assert code == 1
+    [case] = document["error"]["details"]["cases"]
+    assert case["problems"] == ["text: expected 'nope', got 'The README has a title.'"]
+
+
+def test_given_acp_harness_when_kit_runs_live_then_it_reports_the_feature_matrix(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # When: the reference agent's default script answers the live prompts at no cost
+    code, document = adapter_test(ROOT, monkeypatch, capsys, "--live")
+
+    # Then
+    assert code == 0, document
+    live = [c["case"] for c in document["data"]["cases"] if c["case"].startswith("live/")]
+    assert "live/cancel answered within grace" in live
+    assert document["data"]["features"] == {
+        "agent": {"name": "acp-reference", "version": "1.0.0"},
+        "resume": True,
+        "load": True,
+        "additional_directories": False,
+        "models": [],
+        "efforts": [],
+        "modes": [],
+        "extension": {"version": 1, "features": ["outcome"]},
+    }

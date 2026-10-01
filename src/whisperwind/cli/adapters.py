@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from typing import Any
 
@@ -32,10 +33,12 @@ def cmd_adapter_test(args: argparse.Namespace) -> int:
     from whisperwind import conformance
 
     context = project_context()
+    features = None
     try:
         results = conformance.run_offline(args.name, context.root)
         if args.live:
             results += conformance.run_live(args.name, context.root, dict(os.environ))
+            features = conformance.live_features(args.name, context.root, dict(os.environ))
     except (UnknownAdapter, ValueError) as exc:
         if args.json:
             emit_json(False, error=error("E-NOT-FOUND", str(exc)))
@@ -44,7 +47,9 @@ def cmd_adapter_test(args: argparse.Namespace) -> int:
         return ExitCode.NOT_FOUND
     passed = all(r.passed for r in results)
     if args.json:
-        data = {"adapter": args.name, "cases": [r.to_json() for r in results]}
+        data: dict[str, Any] = {"adapter": args.name, "cases": [r.to_json() for r in results]}
+        if features is not None:
+            data["features"] = features
         if passed:
             emit_json(True, data=data)
         else:
@@ -55,6 +60,10 @@ def cmd_adapter_test(args: argparse.Namespace) -> int:
             print(f"{mark} {result.case}")
             for problem in result.problems:
                 print(f"    {problem}")
+        if features is not None:
+            print("features:")
+            for key, value in features.items():
+                print(f"  {key}: {json.dumps(value)}")
         failed = sum(1 for r in results if not r.passed)
         stderr(f"{len(results) - failed}/{len(results)} cases passed")
     return ExitCode.OK if passed else ExitCode.RUN_FAILED
