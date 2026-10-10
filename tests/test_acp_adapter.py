@@ -872,9 +872,7 @@ def test_given_reference_agent_fixtures_when_kit_runs_then_every_case_passes(
 
     # Then
     assert code == 0, document
-    assert [c["case"] for c in document["data"]["cases"]] == [
-        f"fixtures/{case}" for case in REFERENCE_CASES
-    ]
+    assert [c["case"] for c in document["data"]["cases"]] == REFERENCE_CASES
 
 
 def test_given_client_message_off_the_transcript_when_kit_runs_then_the_case_says_where(

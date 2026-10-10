@@ -132,10 +132,7 @@ def test_given_command_adapter_fixtures_when_kit_runs_then_every_case_passes(
     # Then
     document = json.loads(capsys.readouterr().out)
     assert code == 0, document
-    assert [c["case"] for c in document["data"]["cases"]] == [
-        "fixtures/success",
-        "fixtures/no-result",
-    ]
+    assert [c["case"] for c in document["data"]["cases"]] == ["success", "no-result"]
 
 
 def test_given_wrong_expectation_when_kit_runs_then_the_case_fails(

@@ -138,7 +138,8 @@ def run_offline(name: str, root: Path | None) -> list[CaseResult]:
     for directory in dirs:
         expected = YAML(typ="safe", pure=True).load((directory / "expected.yaml").read_text())
         for case, wanted in (expected.get("cases") or {}).items():
-            label = f"{directory.name}/{case}"
+            # A built-in's sets are one per harness version, so its labels name the set.
+            label = case if command_adapter else f"{directory.name}/{case}"
             stream = directory / f"{case}.jsonl"
             if not stream.exists():
                 results.append(CaseResult(label, False, [f"missing {stream.name}"]))
