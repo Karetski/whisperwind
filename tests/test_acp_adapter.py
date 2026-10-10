@@ -367,6 +367,37 @@ def test_given_permission_request_when_answered_then_the_profile_decides(
     assert failed == denied
 
 
+ALWAYS_ONLY = {
+    "turns": [{"steps": [{"tool": "Edit a.txt", "kind": "edit", "options": ["allow_always"]}]}]
+}
+
+
+def test_given_agent_offering_only_allow_always_when_full_then_the_tool_is_allowed(
+    tmp_path: Path,
+) -> None:
+    # When
+    result, _, messages = drive(tmp_path, ALWAYS_ONLY, permissions="full")
+
+    # Then
+    assert result.permission_denials == []
+    answers = [m["result"]["outcome"] for m in messages if "result" in m]
+    assert answers == [{"outcome": "selected", "optionId": "always"}]
+
+
+def test_given_agent_offering_only_allow_always_when_edit_then_the_denial_says_why(
+    tmp_path: Path,
+) -> None:
+    # When: `allow_always` could outlast the profile, so only a one-time allow is taken
+    result, _, messages = drive(tmp_path, ALWAYS_ONLY, permissions="edit")
+
+    # Then
+    assert [(d.tool, d.reason) for d in result.permission_denials] == [
+        ("Edit a.txt", "the agent offers no allow_once option")
+    ]
+    answers = [m["result"]["outcome"] for m in messages if "result" in m]
+    assert answers == [{"outcome": "cancelled"}]
+
+
 # -- failures -------------------------------------------------------------------------
 
 

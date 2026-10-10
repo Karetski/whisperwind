@@ -38,7 +38,9 @@ answers it. Its steps run in order:
 
     {"text": "..."}                          an agent_message_chunk
     {"tool": "Edit a.txt", "kind": "edit"}   a tool call, asking permission first
-                                             unless "ask": false
+                                             unless "ask": false; "options" lists
+                                             the option kinds offered (default:
+                                             allow_once, allow_always, reject_once)
     {"usage": {"used": 10, "size": 100, "cost": 0.01}}   a usage_update
     {"wait_for_cancel": true}                stop with `cancelled` at session/cancel
     {"ignore_cancel": true}                  hang until the process is stopped
@@ -299,6 +301,8 @@ class Agent:
                 {"optionId": "always", "name": "Always allow", "kind": "allow_always"},
                 {"optionId": "reject", "name": "Reject", "kind": "reject_once"},
             ]
+            if "options" in step:
+                options = [o for o in options if o["kind"] in step["options"]]
             answer = self.call(
                 "session/request_permission",
                 {"sessionId": session_id, "toolCall": call, "options": options},

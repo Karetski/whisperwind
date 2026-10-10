@@ -505,11 +505,15 @@ class Turn:
         kind = str(call.get("kind") or "other")
         approved = APPROVED_KINDS.get(self.req.permissions)
         tool = str(call.get("name") or call.get("title") or kind)
+        reason = f"the {self.req.permissions} profile does not allow {kind} tools"
         if approved is None or kind in approved:
-            choice = _option(options, ("allow_once",))
+            # `allow_always` can outlast this attempt's profile, so only `full`,
+            # which allows every kind, falls back to it.
+            kinds = ("allow_once",) if approved is not None else ("allow_once", "allow_always")
+            choice = _option(options, kinds)
             if choice is not None:
                 return {"outcome": {"outcome": "selected", "optionId": choice}}
-        reason = f"the {self.req.permissions} profile does not allow {kind} tools"
+            reason = f"the agent offers no {' or '.join(kinds)} option"
         self.denials.append(Denial(tool, reason))
         self.emit(PermissionDenied(tool, reason))
         choice = _option(options, ("reject_once", "reject_always"))
