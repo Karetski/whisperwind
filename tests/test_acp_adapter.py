@@ -22,6 +22,7 @@ from whisperwind.adapters import (
     Log,
     PermissionDenied,
     SessionSpec,
+    SessionStarted,
     Text,
     ToolCall,
     ToolResult,
@@ -246,6 +247,20 @@ def test_given_agent_that_cannot_resume_when_resumed_then_a_new_session_starts(
     assert result.outcome == "succeeded"
     assert methods(messages)[1] == "session/new"
     assert Log("warning", "the agent cannot resume sessions; starting a new one") in events
+
+
+def test_given_unknown_session_when_resumed_then_no_session_is_reported_started(
+    tmp_path: Path,
+) -> None:
+    # When
+    result, events, _ = drive(
+        tmp_path, {"resume": True}, session=SessionSpec("resume", "missing-session")
+    )
+
+    # Then
+    assert result.outcome == "failed"
+    assert result.error is not None and "no session missing-session" in result.error.message
+    assert not [e for e in events if isinstance(e, SessionStarted)]
 
 
 def test_given_add_dirs_when_the_agent_accepts_them_then_they_are_sent(tmp_path: Path) -> None:

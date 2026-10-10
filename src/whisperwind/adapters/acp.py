@@ -359,13 +359,10 @@ class Turn:
             self.emit(Log("warning", "the agent cannot resume sessions; starting a new one"))
         if method != "session/new":
             params["sessionId"] = resume_id
-            self.session_id = resume_id
-            self.emit(SessionStarted(str(resume_id)))
         opened = await conn.call(method, params)
         opened = opened if isinstance(opened, dict) else {}
-        if method == "session/new":
-            self.session_id = str(opened.get("sessionId"))
-            self.emit(SessionStarted(self.session_id))
+        self.session_id = str(resume_id if method != "session/new" else opened.get("sessionId"))
+        self.emit(SessionStarted(self.session_id))
         return opened
 
     async def _configure(self, conn: Connection, opened: dict[str, Any]) -> None:
