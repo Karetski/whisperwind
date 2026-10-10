@@ -25,13 +25,13 @@ each prompt. Every key is optional:
                  "result": {"outcome": "succeeded", "output": {...}}}]
     }
 
-`extension` advertises Whisperwind's ACP extension: Whisperwind then sends
-the node's settings under the prompt's `_meta.whisperwind` (instructions,
-output_schema, max_turns, budget_usd, budget_tokens, effort, permissions,
-allow_tools, deny_tools), and reads a turn's `result` back from the
-response's `_meta.whisperwind` (outcome, output, num_turns, model, usage,
-cost_usd, permission_denials, error). A real agent fills the result from its
-run; this one returns what the script says.
+`extension` advertises Whisperwind's ACP extension, under the `_meta` key
+`whisperwind.karetski.com`: Whisperwind then sends the node's settings in the
+prompt's `_meta` (instructions, output_schema, max_turns, budget_usd,
+budget_tokens, effort, permissions, allow_tools, deny_tools), and reads a
+turn's `result` back from the response's `_meta` (outcome, output, num_turns,
+model, usage, cost_usd, permission_denials, error). A real agent fills the
+result from its run; this one returns what the script says.
 
 The first turn whose `when` occurs in the prompt (or that has no `when`)
 answers it. Its steps run in order:
@@ -61,7 +61,7 @@ import uuid
 from typing import Any
 
 PROTOCOL_VERSION = 1
-EXTENSION = "whisperwind"
+EXTENSION = "whisperwind.karetski.com"
 AUTH_REQUIRED = -32000
 RESOURCE_NOT_FOUND = -32002
 METHOD_NOT_FOUND = -32601

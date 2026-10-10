@@ -15,12 +15,12 @@ permission profile by tool kind. Tools the agent approves on its own never
 reach the client, so the harness file's optional `modes` map also selects the
 agent's mode for each profile.
 
-What ACP v1 lacks of the adapter contract travels in Whisperwind's extension:
-an agent that advertises `agentCapabilities._meta.whisperwind` with a known
-version and its features gets the request's instructions, output schema,
-limits and permissions under the prompt's `_meta.whisperwind`, and answers with
-its outcome, output, usage, turns and denials under the response's
-`_meta.whisperwind`. Standard ACP fields win where both carry the same
+What ACP v1 lacks of the adapter contract travels in Whisperwind's extension,
+under the `_meta` key `whisperwind.karetski.com`. An agent that advertises it in
+`agentCapabilities._meta` with a known version and its features gets the
+request's instructions, output schema, limits and permissions in the prompt's
+`_meta`, and answers with its outcome, output, usage, turns and denials in the
+response's `_meta`. Standard ACP fields win where both carry the same
 information. Without the extension, instructions lead the prompt and
 structured output falls back to a JSON instruction and extraction.
 """
@@ -75,7 +75,7 @@ APPROVED_KINDS = {
     "read-only": frozenset({"read", "search", "think", "fetch"}),
     "edit": frozenset({"read", "search", "think", "fetch", "edit", "delete", "move"}),
 }
-EXTENSION = "whisperwind"  # the `_meta` key of Whisperwind's ACP extension
+EXTENSION = "whisperwind.karetski.com"  # the `_meta` key of Whisperwind's ACP extension
 EXTENSION_VERSIONS = (1,)
 # Extension features that back a capability the harness file may declare.
 FEATURE_CAPABILITIES = {
@@ -419,7 +419,7 @@ class Turn:
             self.emit(
                 Log(
                     "warning",
-                    f"the agent's {EXTENSION} extension version {advert.get('version')!r} "
+                    f"the agent's Whisperwind extension version {advert.get('version')!r} "
                     f"is not one Whisperwind knows ({', '.join(map(str, EXTENSION_VERSIONS))}); "
                     "using plain ACP",
                 )
@@ -431,7 +431,7 @@ class Turn:
                     Log(
                         "warning",
                         f"the harness file declares {capability}, but the agent does not "
-                        f"advertise the {EXTENSION} extension's {feature} feature",
+                        f"advertise the Whisperwind extension's {feature} feature",
                     )
                 )
         return features

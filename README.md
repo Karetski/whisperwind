@@ -183,16 +183,16 @@ interactive_command: [my-agent, --resume, "{session_id}"]
 - `stream.jsonl` in each attempt keeps the whole conversation, both directions.
 - `whw adapters --probe` starts the agent to show its version and login methods.
 
-**The Whisperwind ACP extension.** An agent you build yourself gets the full adapter contract, as the built-in adapters have it, by speaking ACP plus this extension. It travels in ACP's `_meta` fields under the key `whisperwind`, and every key is optional; an agent that ignores it still works as a plain ACP agent.
+**The Whisperwind ACP extension.** An agent you build yourself gets the full adapter contract, as the built-in adapters have it, by speaking ACP plus this extension. It travels in ACP's `_meta` fields under the key `whisperwind.karetski.com`, and every key is optional; an agent that ignores it still works as a plain ACP agent.
 
-1. **Advertise** it in the `initialize` response, under `agentCapabilities._meta.whisperwind`, with the extension version and the features you implement:
+1. **Advertise** it in the `initialize` response, under `agentCapabilities._meta["whisperwind.karetski.com"]`, with the extension version and the features you implement:
 
    ```json
    {"version": 1, "features": ["instructions", "output_schema", "max_turns", "budget", "usage", "tool_rules", "permissions", "outcome"]}
    ```
 
-2. **Read the request.** Each `session/prompt` then carries the step's settings in `_meta.whisperwind`: `instructions`, `output_schema`, `max_turns`, `budget_usd`, `budget_tokens`, `effort`, `permissions` (the profile name), `allow_tools` and `deny_tools`. Keys the step doesn't set are left out. With the `instructions` feature, instructions come only here, not before the prompt; with `output_schema`, no JSON instruction is added to the prompt.
-3. **Report the result** in the `session/prompt` response's `_meta.whisperwind`:
+2. **Read the request.** Each `session/prompt` then carries the step's settings in `_meta["whisperwind.karetski.com"]`: `instructions`, `output_schema`, `max_turns`, `budget_usd`, `budget_tokens`, `effort`, `permissions` (the profile name), `allow_tools` and `deny_tools`. Keys the step doesn't set are left out. With the `instructions` feature, instructions come only here, not before the prompt; with `output_schema`, no JSON instruction is added to the prompt.
+3. **Report the result** in the `session/prompt` response's `_meta["whisperwind.karetski.com"]`:
 
    ```json
    {"outcome": "succeeded", "output": {"status": "done"}, "num_turns": 7, "model": "large-2",

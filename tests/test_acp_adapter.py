@@ -565,7 +565,7 @@ def test_given_extension_when_prompted_then_each_requested_key_reaches_the_agent
     params = messages[-1]["params"]
     assert params["prompt"] == [{"type": "text", "text": "Pick a word."}]
     assert params["_meta"] == {
-        "whisperwind": {
+        "whisperwind.karetski.com": {
             "instructions": "Be brief.",
             "output_schema": SCHEMA,
             "max_turns": 5,
@@ -665,11 +665,11 @@ def test_given_agent_without_extension_when_capabilities_are_declared_then_it_fa
     warnings = [e.message for e in events if isinstance(e, Log) and e.level == "warning"]
     assert warnings == [
         "the harness file declares structured_output, but the agent does not advertise "
-        "the whisperwind extension's output_schema feature",
+        "the Whisperwind extension's output_schema feature",
         "the harness file declares turn_cap, but the agent does not advertise "
-        "the whisperwind extension's max_turns feature",
+        "the Whisperwind extension's max_turns feature",
         "the harness file declares tokens, but the agent does not advertise "
-        "the whisperwind extension's usage feature",
+        "the Whisperwind extension's usage feature",
     ]
 
 
@@ -686,7 +686,7 @@ def test_given_unknown_extension_version_when_run_then_it_is_reported_and_plain_
     assert result.outcome == "succeeded"
     assert "_meta" not in messages[-1]["params"]
     warning = (
-        "the agent's whisperwind extension version 99 is not one Whisperwind knows (1); "
+        "the agent's Whisperwind extension version 99 is not one Whisperwind knows (1); "
         "using plain ACP"
     )
     assert Log("warning", warning) in events
