@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from engine_support import Result, run_flow
 
-from whisperwind import cli
+from whisperwind import cli, conformance
 from whisperwind.adapters import (
     AdapterEvent,
     AgentRequest,
@@ -860,3 +860,35 @@ def test_given_acp_harness_when_kit_runs_live_then_it_reports_the_feature_matrix
         "modes": [],
         "extension": {"version": 1, "features": ["outcome"]},
     }
+
+
+ENV_AGENT = """
+import json, os, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    seen = ",".join(k for k in ("HARNESS_KEY", "OTHER_SECRET") if k in os.environ)
+    result = {"sessionId": "s"}
+    if message["method"] == "initialize":
+        result = {"protocolVersion": 1, "agentInfo": {"name": "env", "version": seen}}
+    print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+"""
+
+
+def test_given_acp_harness_when_live_features_are_read_then_the_agent_gets_a_runs_environment(
+    tmp_path: Path,
+) -> None:
+    # Given
+    harnesses = tmp_path / ".whisperwind" / "harnesses"
+    harnesses.mkdir(parents=True)
+    command = json.dumps([sys.executable, "-c", ENV_AGENT])
+    (harnesses / "envcheck.yaml").write_text(
+        f"name: envcheck\nprotocol: acp\ncommand: {command}\nenv: [HARNESS_KEY]\n"
+    )
+    environ = {"PATH": os.environ["PATH"], "HARNESS_KEY": "k", "OTHER_SECRET": "s"}
+
+    # When
+    found = conformance.live_features("envcheck", tmp_path, environ)
+
+    # Then
+    assert found is not None
+    assert found["agent"]["version"] == "HARNESS_KEY"

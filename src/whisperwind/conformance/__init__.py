@@ -289,12 +289,20 @@ def run_live(name: str, root: Path | None, environ: dict[str, str]) -> list[Case
 
 def live_features(name: str, root: Path | None, environ: dict[str, str]) -> dict[str, Any] | None:
     """For an ACP adapter, what the agent supports, from a handshake that opens
-    a session without prompting it; None for other adapters."""
+    a session without prompting it; None for other adapters. The agent gets the
+    environment a run would give it."""
+    from whisperwind.config import load_config
+    from whisperwind.engine.environment import process_environment
+
     adapter = registry.load(name, root)
     if not isinstance(adapter, AcpAdapter):
         return None
-    cwd = str((root or Path.cwd()).resolve())
-    shaken = asyncio.run(adapter.handshake(cwd, dict(environ)))
+    project = (root or Path.cwd()).resolve()
+    config, _ = load_config(project)
+    env = process_environment(
+        environ, passthrough=config["env_passthrough"], adapter_vars=adapter.auth_env
+    )
+    shaken = asyncio.run(adapter.handshake(str(project), env))
     return features(*shaken) if shaken is not None else None
 
 
