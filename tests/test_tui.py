@@ -49,6 +49,7 @@ nodes:
   approve:
     type: human
     message: Ship the demo?
+    timeout: none  # the run is stamped by a virtual clock; tests answer it by the real one
     choices: [ship, stop]
 """
 QUICK = "name: quick\nnodes:\n  a: {type: set, vars: {x: 1}}\n"
