@@ -30,8 +30,10 @@ each prompt. Every key is optional:
 prompt's `_meta` (instructions, output_schema, max_turns, budget_usd,
 budget_tokens, effort, permissions, allow_tools, deny_tools), and reads a
 turn's `result` back from the response's `_meta` (outcome, output, num_turns,
-model, usage, cost_usd, permission_denials, error). A real agent fills the
-result from its run; this one returns what the script says.
+model, usage, cost_usd, permission_denials, error). Each key travels only
+when the agent advertises the feature that carries it (see the README). A
+real agent fills the result from its run; this one returns what the script
+says.
 
 The first turn whose `when` occurs in the prompt (or that has no `when`)
 answers it. Its steps run in order:

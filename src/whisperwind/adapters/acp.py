@@ -20,9 +20,11 @@ under the `_meta` key `whisperwind.karetski.com`. An agent that advertises it in
 `agentCapabilities._meta` with a known version and its features gets the
 request's instructions, output schema, limits and permissions in the prompt's
 `_meta`, and answers with its outcome, output, usage, turns and denials in the
-response's `_meta`. Standard ACP fields win where both carry the same
-information. Without the extension, instructions lead the prompt and
-structured output falls back to a JSON instruction and extraction.
+response's `_meta`. A key that a feature carries travels, in either direction,
+only when the agent advertises that feature. Standard ACP fields win where
+both carry the same information. Without the extension, or its feature,
+instructions lead the prompt and structured output falls back to a JSON
+instruction and extraction.
 """
 
 from __future__ import annotations
@@ -84,6 +86,17 @@ FEATURE_CAPABILITIES = {
     "budget": "budget_cap",
     "usage": "tokens",
     "tool_rules": "tool_rules",
+}
+# The extension feature that carries each request key; keys without one always travel.
+REQUEST_FEATURES = {
+    "instructions": "instructions",
+    "output_schema": "output_schema",
+    "max_turns": "max_turns",
+    "budget_usd": "budget",
+    "budget_tokens": "budget",
+    "permissions": "permissions",
+    "allow_tools": "tool_rules",
+    "deny_tools": "tool_rules",
 }
 # Outcomes an agent can know about; the engine decides `cancelled` and `timed_out`.
 AGENT_OUTCOMES = ("succeeded", "failed", "budget_exceeded", "schema_invalid")
@@ -329,8 +342,9 @@ class Turn:
                 "sessionId": self.session_id,
                 "prompt": [{"type": "text", "text": self._text()}],
             }
-            if self.features is not None:
-                params["_meta"] = {EXTENSION: self._extension_request()}
+            extension = self._extension_request()
+            if extension:
+                params["_meta"] = {EXTENSION: extension}
             self.prompt = conn.request("session/prompt", params)
             # Waiting, unlike awaiting, leaves the request pending when this task
             # is cancelled, so the cancel path can still collect its response.
@@ -434,6 +448,10 @@ class Turn:
         return features
 
     def _extension_request(self) -> dict[str, Any]:
+        """The request's settings for the extension, each only when the agent
+        advertises the feature that carries it."""
+        if self.features is None:
+            return {}
         req = self.req
         values = {
             "instructions": req.instructions,
@@ -446,7 +464,12 @@ class Turn:
             "allow_tools": req.allow_tools or None,
             "deny_tools": req.deny_tools or None,
         }
-        return {key: value for key, value in values.items() if value is not None}
+        return {
+            key: value
+            for key, value in values.items()
+            if value is not None
+            and (key not in REQUEST_FEATURES or self._has(REQUEST_FEATURES[key]))
+        }
 
     def _has(self, feature: str) -> bool:
         return self.features is not None and feature in self.features
@@ -553,9 +576,10 @@ class Turn:
         return result
 
     def _refine(self, result: AgentResult, extension: dict[str, Any], outcome: bool) -> None:
-        """Fill the result from the extension's result payload."""
+        """Fill the result from the extension's result payload, reading each key
+        only when the agent advertises the feature that carries it."""
         usage = extension.get("usage")
-        if isinstance(usage, dict):
+        if isinstance(usage, dict) and self._has("usage"):
             keys = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens")
             result.usage = Usage(**{key: int(usage.get(key) or 0) for key in keys})
         cost = extension.get("cost_usd")
@@ -565,14 +589,14 @@ class Turn:
             result.num_turns = extension["num_turns"]
         if extension.get("model"):
             result.model = str(extension["model"])
-        if "output" in extension:
+        if "output" in extension and self._has("output_schema"):
             result.output = extension["output"]
         for denial in extension.get("permission_denials") or []:
-            if isinstance(denial, dict) and denial.get("tool"):
+            if isinstance(denial, dict) and denial.get("tool") and self._has("permissions"):
                 reason = str(denial.get("reason") or "")
                 result.permission_denials.append(Denial(str(denial["tool"]), reason))
         reported = extension.get("outcome")
-        if not outcome or reported not in AGENT_OUTCOMES:
+        if not outcome or reported not in AGENT_OUTCOMES or not self._has("outcome"):
             return
         result.outcome = reported
         error = extension.get("error")

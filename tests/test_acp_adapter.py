@@ -677,6 +677,53 @@ def test_given_extension_result_when_the_turn_ends_then_each_key_is_mapped(
     assert [(d.tool, d.reason) for d in result.permission_denials] == [("Bash", "not allowed")]
 
 
+def test_given_extension_without_a_feature_when_prompted_then_its_keys_stay_in_the_prompt(
+    tmp_path: Path,
+) -> None:
+    # When: the agent advertises only `outcome`
+    _, _, messages = drive(
+        tmp_path,
+        {"extension": {"version": 1, "features": ["outcome"]}},
+        prompt="Pick a word.",
+        instructions="Be brief.",
+        output_schema=SCHEMA,
+        max_turns=5,
+        budget_usd=1.5,
+        effort="high",
+        allow_tools=["Read"],
+    )
+
+    # Then: only keys no feature carries travel in the extension
+    params = messages[-1]["params"]
+    assert params["_meta"] == {"whisperwind.karetski.com": {"effort": "high"}}
+    text = params["prompt"][0]["text"]
+    assert text.startswith("# Instructions\n\nBe brief.")
+    assert "reply with only a JSON object" in text
+
+
+def test_given_extension_without_a_feature_when_the_result_has_its_keys_then_they_are_ignored(
+    tmp_path: Path,
+) -> None:
+    # Given: the agent advertises only `outcome`
+    payload = {
+        "outcome": "succeeded",
+        "output": {"word": "kiwi"},
+        "num_turns": 7,
+        "usage": {"input_tokens": 100, "output_tokens": 20},
+        "permission_denials": [{"tool": "Bash", "reason": "not allowed"}],
+    }
+    turn = {"steps": [{"text": '{"word": "fig"}'}], "result": payload}
+    script = {"extension": {"version": 1, "features": ["outcome"]}, "turns": [turn]}
+
+    # When
+    result, _, _ = drive(tmp_path, script, output_schema=SCHEMA)
+
+    # Then
+    assert (result.output, result.num_turns) == ({"word": "fig"}, 7)
+    assert result.usage.to_json()["total_tokens"] == 0
+    assert result.permission_denials == []
+
+
 @pytest.mark.parametrize(
     ("payload", "outcome", "kind"),
     [

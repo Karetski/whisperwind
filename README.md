@@ -191,7 +191,21 @@ interactive_command: [my-agent, --resume, "{session_id}"]
    {"version": 1, "features": ["instructions", "output_schema", "max_turns", "budget", "usage", "tool_rules", "permissions", "outcome"]}
    ```
 
-2. **Read the request.** Each `session/prompt` then carries the step's settings in `_meta["whisperwind.karetski.com"]`: `instructions`, `output_schema`, `max_turns`, `budget_usd`, `budget_tokens`, `effort`, `permissions` (the profile name), `allow_tools` and `deny_tools`. Keys the step doesn't set are left out. With the `instructions` feature, instructions come only here, not before the prompt; with `output_schema`, no JSON instruction is added to the prompt.
+   Each feature carries its own keys, in the request and in the result. Whisperwind sends a request key, and reads a result key, only when the agent advertises its feature:
+
+   | Feature | Request keys | Result keys |
+   |---|---|---|
+   | `instructions` | `instructions` | |
+   | `output_schema` | `output_schema` | `output` |
+   | `max_turns` | `max_turns` | |
+   | `budget` | `budget_usd`, `budget_tokens` | |
+   | `tool_rules` | `allow_tools`, `deny_tools` | |
+   | `permissions` | `permissions` (the profile name) | `permission_denials` |
+   | `usage` | | `usage` |
+   | `outcome` | | `outcome`, `error` |
+   | (none; always) | `effort` | `num_turns`, `model`, `cost_usd` |
+
+2. **Read the request.** Each `session/prompt` carries the step's settings in `_meta["whisperwind.karetski.com"]`. Keys the step doesn't set are left out. Without the `instructions` feature, instructions come before the prompt instead; without `output_schema`, the prompt gets a JSON instruction and Whisperwind extracts the output from the text.
 3. **Report the result** in the `session/prompt` response's `_meta["whisperwind.karetski.com"]`:
 
    ```json
