@@ -158,6 +158,32 @@ def test_given_acp_agent_when_a_node_runs_then_text_tools_and_cost_are_mapped(
     assert messages[2]["params"]["prompt"] == [{"type": "text", "text": "Greet."}]
 
 
+def test_given_acp_agent_when_a_turn_runs_then_the_attempt_keeps_its_conversation_and_stderr(
+    tmp_path: Path,
+) -> None:
+    # Given
+    script = {"turns": [{"steps": [{"stderr": "loading model"}, {"text": "Done."}]}]}
+
+    # When
+    drive(tmp_path, script)
+
+    # Then
+    attempt_dir = tmp_path / "attempt"
+    lines = [json.loads(line) for line in (attempt_dir / "stream.jsonl").read_text().splitlines()]
+    sides = [(line["from"], line["message"].get("method")) for line in lines]
+    assert sides == [
+        ("client", "initialize"),
+        ("agent", None),
+        ("client", "session/new"),
+        ("agent", None),
+        ("client", "session/prompt"),
+        ("agent", "session/update"),
+        ("agent", None),
+    ]
+    assert lines[-1]["message"]["result"]["stopReason"] == "end_turn"
+    assert (attempt_dir / "stderr.log").read_text() == "loading model\n"
+
+
 def test_given_acp_agent_when_it_streams_then_each_update_becomes_an_event(
     tmp_path: Path,
 ) -> None:

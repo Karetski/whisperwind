@@ -44,6 +44,7 @@ answers it. Its steps run in order:
     {"usage": {"used": 10, "size": 100, "cost": 0.01}}   a usage_update
     {"wait_for_cancel": true}                stop with `cancelled` at session/cancel
     {"ignore_cancel": true}                  hang until the process is stopped
+    {"stderr": "..."}                        a line on stderr
     {"exit": 3}                              exit mid-turn, without a response
     {"error": {"code": -32603, "message": "..."}}   answer the prompt with an error
 
@@ -285,6 +286,8 @@ class Agent:
         elif step.get("ignore_cancel"):
             while True:
                 time.sleep(3600)
+        elif "stderr" in step:
+            print(step["stderr"], file=sys.stderr, flush=True)
         elif "exit" in step:
             sys.exit(int(step["exit"]))
         elif "error" in step:
