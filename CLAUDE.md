@@ -7,6 +7,7 @@ Whisperwind is a terminal-first, harness-agnostic workflow orchestrator for AI c
 | Read | For |
 |---|---|
 | `README.md` | What the tool does today: flow format, node types, CLI, TUI, adapters, configuration. |
+| `VISION.md` | Where it is going: Python flows on DBOS, concurrency, visualization, what to adopt, the phased roadmap, and the decision log. |
 | `src/whisperwind/` | The implementation. |
 | `tests/` | Behavior as tested; `tests/flows/` is the validation corpus. |
 | `examples/` | Example flows, kept identical to their copies in the valid corpus. |
