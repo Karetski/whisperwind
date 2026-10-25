@@ -41,3 +41,41 @@ Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
 
     Read-only commands stay fast only if they never import DBOS, which means reading SQLite directly, which in turn means finding 5 must be solved.
 11. **Shutdown waits out a poll.** `DBOS.destroy()` takes about 1.1 s by default, because it waits for the notification listener's next poll (`notification_listener_polling_interval_sec`, 1.0 s). At 0.05 s it takes about 140 ms. That poll is also how a run notices a `send` from another process, so the interval trades shutdown time and answer latency against polling load. The slice uses 0.1 s.
+
+## One process per run (#36)
+
+`process_per_run.py` runs one of two flows per process, against a shared SQLite file:
+- `steps`: N agent steps, each a DBOS checkpoint plus an event write;
+- `fanout`: N child workflows on a queue with `global_concurrency=2`.
+
+Each run uses either one shared DBOS application name or a name of its own. `test_process_per_run.py` asserts the two properties the process model relies on. `measure_process_per_run.py` reproduces the numbers below.
+
+### Findings
+
+Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
+
+1. **V2 holds only with an application name per run.** The executor ID alone isn't enough:
+   - Startup recovery re-enqueues the run's pending workflows on DBOS's internal queue.
+   - Every DBOS process always dequeues the internal queue, and `listen_queues` can't exclude it.
+   - The dequeue filters by queue, status, application version and application name, but not by executor.
+
+   So with a shared name, when four crashed runs resumed at once, one process executed all four in each of six trials, and in one trial two runs hung. With a name per run (`whisperwind-spike-<run>`), every run executed only in its own process in every trial. `test_process_per_run.py` asserts this, and fails when switched to a shared name.
+2. **An application name per run has costs.**
+   - Queue names must be unique across applications in one database, so a queue belongs to one run.
+   - DBOS's listing APIs default to the caller's own application. Listing across runs needs an explicit list of names, a client with no application of its own, or a direct SQL read.
+3. **A queue's global limit holds across processes, but its work doesn't stay home.** With three runs sharing a queue capped at 2:
+   - peak concurrency stayed at 2;
+   - 25–50% of children executed in another run's process;
+   - in two of three trials a run hung, because a child was left PENDING under the executor of a process that had already exited.
+
+   Draining on shutdown with `DBOS.destroy(workflow_completion_timeout_sec=30)` didn't prevent it: runs still hung in two of three trials. Per-host and per-harness caps across runs (#57) therefore can't use a shared DBOS queue under one process per run. They need either a long-lived worker that owns the queue (decision D9) or a cap mechanism of Whisperwind's own.
+4. **Concurrent writers are fine.** Six runs of 100 steps each wrote one SQLite file at once:
+   - 600 of 600 step outputs and 600 of 600 events landed;
+   - no process failed;
+   - no "database is locked" error appeared.
+5. **DBOS leaves SQLite in rollback-journal mode, so Whisperwind must switch on WAL.** Without WAL, writers block readers:
+   - a `whw status`-style reader polling with stdlib `sqlite3` saw p99 latency of 195–490 ms, against about 4 ms in WAL mode;
+   - the same 600 steps took 5.5 s instead of 3.0 s.
+
+   WAL persists in the file. `dbos_slice.run()` now switches it on before launching DBOS, so the rollback numbers come from runs made before that change.
+6. **SQLite version.** DBOS uses `RETURNING`, which needs SQLite 3.35 or newer. uv-managed CPython 3.11, 3.12 and 3.15 bundle SQLite 3.53, Homebrew's 3.13 and 3.14 bundle 3.54, and macOS's system Python 3.9 bundles 3.51. python.org's installers were not checked. Distribution Pythons with an older SQLite (Ubuntu 20.04, RHEL 8) would fail, which the documented uv-managed install avoids.
