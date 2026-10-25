@@ -11,7 +11,7 @@ The project is pre-release. The kernel is built in phases (`VISION.md` §13); no
 | `VISION.md` | The locked direction: principles, flow model, architecture, what to adopt and what to own, the phased roadmap, risks and the decision log. |
 | `README.md` | Whisperwind as designed, for users, with a status section saying what runs today. |
 | GitHub issues | The roadmap as work: one milestone per phase (Now, P0–P5), with the phase's exit criteria in its description. |
-| `docs/adr/` | Decision records, numbered from 0001. The directory is created with the first one. |
+| `docs/adr/` | Decision records, numbered from 0001, with an index in its README. |
 | `src/whisperwind/` | The implementation. `VISION.md` §12 says which modules are kept and ported, reworked, replaced or retired. |
 | `tests/` | Behavior as tested. |
 
