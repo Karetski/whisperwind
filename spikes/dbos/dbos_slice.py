@@ -127,7 +127,7 @@ def flow(fn: F) -> F:
 
 
 @DBOS.step()
-async def _agent_step(prompt: str, reply: str) -> dict[str, Any]:
+async def _agent_step(prompt: str, reply: str, delay: int) -> dict[str, Any]:
     run_id, step = DBOS.workflow_id or "", DBOS.step_id or 0
     # A rerun after a crash resumes the session the killed attempt started.
     resumed = recorded_session(run_id, step)
@@ -160,16 +160,16 @@ async def _agent_step(prompt: str, reply: str) -> dict[str, Any]:
         budget_tokens=None,
         bare=True,
         env={},
-        options={"responses": [{"text": reply}]},
+        options={"responses": [{"text": reply, "delay": delay}]},
         attempt_dir=".",
     )
     result = await FakeAdapter().run(request, emit)
     return {"text": result.text, "session_id": result.session_id}
 
 
-async def agent(prompt: str, *, reply: str) -> str:
-    """Run an agent step on the fake harness, which answers with `reply`."""
-    return str((await _agent_step(prompt, reply))["text"])
+async def agent(prompt: str, *, reply: str, delay: int = 0) -> str:
+    """Run an agent step on the fake harness, which answers with `reply` after `delay` seconds."""
+    return str((await _agent_step(prompt, reply, delay))["text"])
 
 
 @dataclass(frozen=True)
