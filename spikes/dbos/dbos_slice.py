@@ -10,7 +10,7 @@ It starts the run, or recovers it when the database already holds it, and prints
 the flow's result as JSON. Three environment variables drive the crash tests:
 SPIKE_CRASH_AT=N kills the process at the Nth crash point, SPIKE_TRACE names a
 file that lists every crash point passed, and SPIKE_LEDGER names a file that
-records every step execution.
+records every step execution: its step number, kind, run and process ID.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from dbos import DBOS, SetWorkflowID
+from dbos import DBOS, SetWorkflowID, WorkflowHandleAsync
 from dbos._error import DBOSNonExistentWorkflowError
 
 # Private: the crash points wrap the system database's writes, because DBOS's own
@@ -36,6 +36,7 @@ from dbos._sys_db import SystemDatabase
 from whisperwind.adapters import AdapterEvent, AgentRequest, SessionSpec, SessionStarted
 from whisperwind.adapters.fake import FakeAdapter
 
+APP_NAME = "whisperwind-spike"
 CRASH_EXIT = 77
 DB_WRITES = ("init_workflow", "record_operation_result", "update_workflow_outcome")
 
@@ -74,10 +75,11 @@ for _name in DB_WRITES:
     _with_crash_points(_name)
 
 
-def _ledger(step: int, kind: str) -> None:
-    if ledger := os.environ.get("SPIKE_LEDGER"):
-        with open(ledger, "a") as f:
-            f.write(f"{step} {kind}\n")
+def ledger(step: int, kind: str) -> None:
+    """Record a step execution, for tests that count reruns and check which process ran it."""
+    if path := os.environ.get("SPIKE_LEDGER"):
+        with open(path, "a") as f:
+            f.write(f"{step} {kind} {DBOS.workflow_id} {os.getpid()}\n")
 
 
 def write_event(run_id: str, step: int, kind: str, data: dict[str, Any]) -> None:
@@ -105,7 +107,7 @@ def flow(fn: F) -> F:
 @DBOS.step()
 async def _agent_step(prompt: str, reply: str) -> dict[str, Any]:
     run_id, step = DBOS.workflow_id or "", DBOS.step_id or 0
-    _ledger(step, "agent")
+    ledger(step, "agent")
 
     def emit(event: AdapterEvent) -> None:
         if isinstance(event, SessionStarted):
@@ -157,7 +159,7 @@ class ShellResult:
 
 @DBOS.step()
 async def _shell_step(argv: list[str]) -> dict[str, Any]:
-    _ledger(DBOS.step_id or 0, "shell")
+    ledger(DBOS.step_id or 0, "shell")
     process = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )
@@ -184,13 +186,19 @@ async def fix_until_green(goal: str, max_rounds: int = 3) -> str:
     return f"still failing after {max_rounds} attempts"
 
 
-async def main(db: str, run_id: str) -> None:
+async def run(
+    db: str,
+    run_id: str,
+    start: Callable[[], Awaitable[WorkflowHandleAsync[Any]]],
+    app_name: str = APP_NAME,
+) -> Any:
+    """Launch DBOS for one run, start the run or recover it, and return its result."""
     global _db
     _db = db
     # The run ID doubles as the executor ID, so launching recovers only this run.
     DBOS(
         config={
-            "name": "whisperwind-spike",
+            "name": app_name,
             "system_database_url": f"sqlite:///{db}",
             "executor_id": run_id,
             "log_level": "WARNING",
@@ -204,10 +212,17 @@ async def main(db: str, run_id: str) -> None:
             handle = await DBOS.retrieve_workflow_async(run_id)
         except DBOSNonExistentWorkflowError:
             with SetWorkflowID(run_id):
-                handle = await DBOS.start_workflow_async(fix_until_green, "add rate limiting")
-        print(json.dumps(await handle.get_result()))
+                handle = await start()
+        return await handle.get_result()
     finally:
         DBOS.destroy()
+
+
+async def main(db: str, run_id: str) -> None:
+    result = await run(
+        db, run_id, lambda: DBOS.start_workflow_async(fix_until_green, "add rate limiting")
+    )
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":
