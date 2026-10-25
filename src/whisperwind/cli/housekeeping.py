@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from whisperwind import purity
 from whisperwind.adapters import registry
 from whisperwind.cli.common import project_context, stderr
 from whisperwind.clock import Clock, parse_iso
@@ -331,12 +330,6 @@ def environment_checks(context: Any) -> list[dict[str, str]]:
             checks.append(_check(name, "warn", f"{probe.version} is outside tested_versions"))
         else:
             checks.append(_check(name, "ok", f"{probe.version}"))
-    impure = purity.find_impure(purity.installed_wheels(purity.dependency_names()))
-    if impure:
-        names = ", ".join(name for name, _ in impure)
-        checks.append(_check("dependencies", "warn", f"not pure Python: {names}"))
-    else:
-        checks.append(_check("dependencies", "ok", "all runtime dependencies are pure Python"))
     runs_dir = context.config.runs_dir
     probe_dir = runs_dir if runs_dir.exists() else context.root
     fstype = _filesystem_type(probe_dir)
