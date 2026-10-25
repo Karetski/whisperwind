@@ -105,6 +105,20 @@ def write_event(run_id: str, step: int, kind: str, data: dict[str, Any]) -> None
     crash_point(f"after event {kind}")
 
 
+def recorded_session(run_id: str, step: int) -> str | None:
+    """The harness session an earlier attempt at this step started, if it recorded one."""
+    with closing(sqlite3.connect(_db, timeout=30)) as conn:
+        try:
+            row = conn.execute(
+                "SELECT data FROM whw_events WHERE run_id = ? AND step = ?"
+                " AND kind = 'session_started' ORDER BY id LIMIT 1",
+                (run_id, step),
+            ).fetchone()
+        except sqlite3.OperationalError:  # no event has been written yet
+            return None
+    return str(json.loads(row[0])["session_id"]) if row else None
+
+
 # -- primitives ---------------------------------------------------------------------
 
 
@@ -115,10 +129,12 @@ def flow(fn: F) -> F:
 @DBOS.step()
 async def _agent_step(prompt: str, reply: str) -> dict[str, Any]:
     run_id, step = DBOS.workflow_id or "", DBOS.step_id or 0
-    ledger(step, "agent")
+    # A rerun after a crash resumes the session the killed attempt started.
+    resumed = recorded_session(run_id, step)
+    ledger(step, "agent:resume" if resumed else "agent")
 
     def emit(event: AdapterEvent) -> None:
-        if isinstance(event, SessionStarted):
+        if isinstance(event, SessionStarted) and not resumed:
             write_event(run_id, step, "session_started", {"session_id": event.session_id})
 
     request = AgentRequest(
@@ -136,8 +152,9 @@ async def _agent_step(prompt: str, reply: str) -> dict[str, Any]:
         allow_tools=[],
         deny_tools=[],
         output_schema=None,
-        # A session ID derived from the run and step survives a rerun of the step.
-        session=SessionSpec(new_id=f"{run_id}-{step}"),
+        session=SessionSpec(mode="resume", resume_id=resumed)
+        if resumed
+        else SessionSpec(new_id=f"{run_id}-{step}"),
         max_turns=None,
         budget_usd=None,
         budget_tokens=None,

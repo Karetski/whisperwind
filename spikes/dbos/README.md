@@ -12,12 +12,7 @@ uv run --group spike pytest spikes -q
 
 `dbos_slice.py` is one sequential flow on DBOS with SQLite: an `agent` step on the fake harness that plans, then rounds of an `agent` step and a `shell` step until the tests pass on the second round. One process runs one run, and the run ID doubles as the DBOS workflow ID and executor ID. Agent steps write a `session_started` event to a `whw_events` table in DBOS's SQLite file.
 
-`test_dbos_slice.py` finds every crash point a clean run passes: before and after each DBOS write (workflow start, each step checkpoint, workflow outcome) and each event write, 20 in all. For each point, it kills a fresh run there, resumes it in a new process, and checks four things:
-
-- the resumed run returns the same result;
-- no step whose checkpoint was committed before the kill runs again;
-- every step ran;
-- no checkpointed step's event was written twice.
+The crash suite (`crash_suite.py`, run by `test_crash_suite.py`; see below) finds every crash point a clean run of the slice passes: before and after each DBOS write (workflow start, each step checkpoint, workflow outcome) and each event write, 20 in all. For each point, it kills a fresh run there, resumes it in a new process, and checks the four things listed under the crash-injection suite below.
 
 All 20 points pass. A mutation check (deleting the checkpoints before resuming) confirmed that the test reports reruns.
 
@@ -27,7 +22,7 @@ Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
 
 1. **Resume works.** Relaunching with the run's executor ID recovered only that run. Recovery re-enqueues the workflow on an internal queue, and a background thread dispatches it. Several run processes on one SQLite file are not tested here (#36).
 2. **Steps are at-least-once, and so are their events.** A step killed after its effect but before its checkpoint runs again, and repeats its event writes. A kill right after the `session_started` write produced that event twice. Event writes need an idempotency key, such as the step path, the event kind and a sequence number (#42).
-3. **Harness sessions can survive a rerun.** Deriving the session ID from the run and step gives a rerun step the same session to resume (#43).
+3. **A rerun step can resume its harness session.** Before running, an agent step looks for the `session_started` event an earlier attempt wrote. If it finds one, it resumes that session instead of starting a new one (#43). The crash suite asserts this.
 4. **Crash injection needs private API.** DBOS's own debug triggers fire only after a step commits and after a workflow starts. The spike wraps three `SystemDatabase` methods (`init_workflow`, `record_operation_result`, `update_workflow_outcome`), so the crash suite (#38) depends on DBOS internals and must pin DBOS exactly. Asking upstream for before-commit trigger points would remove that dependency.
 5. **DBOS pickles by default.** Workflow inputs, outputs and step outputs are stored as base64 pickles. Reading them without DBOS means unpickling, which runs code from the database. DBOS also ships a portable JSON serializer (the `serializer` config key), which #41 and #42 should evaluate.
 6. **Virtual time works in one process, not across a restart.** Under today's `run_virtual` loop, a workflow that calls `DBOS.sleep_async(86400)` finished in 0.18 s of real time. But DBOS records the sleep's wake time from `time.time()`, so a resumed run computes its remaining wait from the real clock. A durable `sleep` that tests can run instantly across a restart needs its own wake-time step on Whisperwind's `Clock`, or an injectable time source in DBOS (#46).
@@ -86,7 +81,7 @@ Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
 - `parallel` runs each branch as a child workflow with the ID `<parent>/parallel#<n>/<i>`;
 - `rerun` reruns one branch by forking.
 
-The path syntax is provisional (#33). `review` is a fan-out of three branches, each an agent step and a shell step. `slow` runs two branches whose supervised shell step holds a 30-second process. `test_scopes.py` covers V1, V5, V6, and kill-and-resume at each of the fan-out's 48 crash points. The crash points now include child-workflow starts and awaits of a child's result.
+The path syntax is provisional (#33). `review` is a fan-out of three branches, each an agent step and a shell step. `slow` runs two branches whose supervised shell step holds a 30-second process. `test_scopes.py` covers V1, V5 and V6. The crash suite kills and resumes the fan-out at each of its 48 crash points, which include child-workflow starts and awaits of a child's result.
 
 ### Findings
 
@@ -137,3 +132,25 @@ The path syntax is provisional (#33). `review` is a fan-out of three branches, e
 6. **Inserting or removing a step before the pause shifts step numbers.** DBOS then raises `DBOSUnexpectedStepError` (`step 1, function _fingerprinted_agent_step was recorded when _shell_step was expected`), which the spike reports as `shell#0: a different step was recorded here`. Every primitive must catch it, or the workflow ends in ERROR.
 7. **A divergence must not end the workflow.** `resume_workflow` skips workflows in ERROR as well as SUCCESS, so an errored run can't continue. The spike stops the run process without recording an outcome: the run stays PENDING, and reverting the edit resumes it. Accepting an edit to finished steps would mean forking from the step that diverged, which creates a new run ID (scope finding 5).
 8. **DBOS's internal steps take step numbers too.** A `recv` with a timeout records its deadline at the next step number, and every await of a child's result is a step. So DBOS step numbers never line up with Whisperwind's per-kind ordinals (#33).
+
+## Crash-injection suite (#38)
+
+`crash_suite.py` is the V8 harness. A flow is described by the command that runs it against a working directory, plus its expected result. The harness:
+1. runs the flow once uninterrupted, to list its crash points: before and after every DBOS write (workflow and child-workflow start, step checkpoint, await of a child's result, workflow outcome) and every event write;
+2. for each point, kills a fresh run there, resumes it in a new process, and checks that:
+   - the resumed run returns the uninterrupted run's result;
+   - no step whose checkpoint was committed before the kill runs again;
+   - every rerun agent step that had started a harness session resumes it;
+   - no checkpointed step writes its session event twice.
+
+`test_crash_suite.py` runs it over the sequential slice (20 crash points) and the three-branch fan-out (48), and checks one kill after a session started end to end. Every later primitive adds its flow here.
+
+### Findings
+
+1. **V8 holds** for the sequential slice and the fan-out: every kill resumes correctly.
+2. **Each check has been seen to fail.**
+   - Deleting a pending step's checkpoint before resuming makes the rerun check fire.
+   - Turning off session resume makes the session check fire at exactly the six points where an agent step's session had started but its checkpoint hadn't been committed.
+3. **A kill can't land inside a DBOS transaction.** The crash points sit before and after each write, and each write commits atomically. So the suite tests the windows between writes, not torn writes.
+4. **It kills once per run.** A kill during recovery itself (dequeue, re-execution) isn't covered yet. Repeating kill-and-resume from each resumed state would cover it, at the cost of a run time quadratic in the number of points.
+5. **The suite takes about 3 minutes in total.** Each point costs two processes, about 1.5 s, most of it importing and shutting down DBOS. The fan-out alone is about 2 minutes.

@@ -1,20 +1,17 @@
 """Scopes on DBOS child workflows: branches start concurrently under path IDs (V1),
-one branch reruns without its siblings (V5), cancelling a branch reaches its
-process group (V6), and a fan-out resumes after a kill at any crash point."""
+one branch reruns without its siblings (V5), and cancelling a branch reaches its
+process group (V6). The fan-out's behavior under a kill is in test_crash_suite.py."""
 
 from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 import time
-from contextlib import closing
 from pathlib import Path
 
 from dbos import DBOSClient
-from dbos_slice import CRASH_EXIT
 from scopes import app_name
 
 SCRIPT = Path(__file__).with_name("scopes.py")
@@ -26,44 +23,21 @@ RESULT = (
 )
 
 
-def command(
-    workdir: Path, *args: str, crash_at: int | None = None, trace: bool = False
-) -> tuple[list[str], dict[str, str]]:
+def command(workdir: Path, *args: str) -> tuple[list[str], dict[str, str]]:
     """The argv and environment that run scopes.py against workdir's database."""
     env = {**os.environ, "SPIKE_LEDGER": str(workdir / "ledger")}
-    for name in ("SPIKE_CRASH_AT", "SPIKE_TRACE"):
-        env.pop(name, None)
-    if crash_at is not None:
-        env["SPIKE_CRASH_AT"] = str(crash_at)
-    if trace:
-        env["SPIKE_TRACE"] = str(workdir / "trace")
+    env.pop("SPIKE_CRASH_AT", None)
     return [sys.executable, str(SCRIPT), args[0], str(workdir / "run.sqlite"), *args[1:]], env
 
 
-def call(
-    workdir: Path, *args: str, crash_at: int | None = None, trace: bool = False
-) -> subprocess.CompletedProcess[str]:
-    argv, env = command(workdir, *args, crash_at=crash_at, trace=trace)
+def call(workdir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    argv, env = command(workdir, *args)
     return subprocess.run(argv, env=env, capture_output=True, text=True, timeout=120)
 
 
 def ledger(workdir: Path) -> list[list[str]]:
     path = workdir / "ledger"
     return [line.split() for line in path.read_text().splitlines()] if path.exists() else []
-
-
-def checkpointed(workdir: Path) -> set[tuple[str, int]]:
-    db = workdir / "run.sqlite"
-    if not db.exists():
-        return set()
-    with closing(sqlite3.connect(db)) as conn:
-        try:
-            rows = conn.execute(
-                "SELECT workflow_uuid, function_id FROM operation_outputs"
-            ).fetchall()
-        except sqlite3.OperationalError:  # the schema doesn't exist yet
-            return set()
-    return {(str(workflow), int(step)) for workflow, step in rows}
 
 
 def test_given_a_fan_out_when_it_runs_then_branches_run_at_once_as_child_workflows_named_by_path(
@@ -142,37 +116,3 @@ def alive(pid: int) -> bool:
     # A killed child stays a zombie until its parent reaps it.
     status = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
     return not status.stdout.strip().startswith("Z")
-
-
-def test_given_a_kill_at_any_crash_point_of_a_fan_out_when_resumed_then_no_checkpointed_step_reruns(
-    tmp_path: Path,
-) -> None:
-    # Given: how many crash points a clean run passes
-    clean = tmp_path / "clean"
-    clean.mkdir()
-    assert call(clean, "run", RUN_ID, "review", trace=True).returncode == 0
-    points = len((clean / "trace").read_text().splitlines())
-
-    failures = []
-    for n in range(1, points + 1):
-        workdir = tmp_path / f"crash-{n}"
-        workdir.mkdir()
-
-        # When: the run is killed at point n, then resumed
-        crashed = call(workdir, "run", RUN_ID, "review", crash_at=n)
-        saved, executed = checkpointed(workdir), len(ledger(workdir))
-        resumed = call(workdir, "run", RUN_ID, "review")
-
-        # Then
-        problems = []
-        if crashed.returncode != CRASH_EXIT:
-            problems.append(f"crash run exited {crashed.returncode}: {crashed.stderr[-300:]}")
-        if resumed.returncode != 0 or json.loads(resumed.stdout or "null") != RESULT:
-            problems.append(f"resume exited {resumed.returncode}: {resumed.stderr[-300:]}")
-        rerun = {(line[2], int(line[0])) for line in ledger(workdir)[executed:]} & saved
-        if rerun:
-            problems.append(f"checkpointed steps ran again: {sorted(rerun)}")
-        if problems:
-            failures.append(f"point {n}: " + "; ".join(problems))
-
-    assert not failures, "\n".join(failures)
