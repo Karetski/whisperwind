@@ -19,7 +19,7 @@ from whisperwind.store.lock import STALE_AFTER_S, LockHeld, RunLock, hostname, r
 from whisperwind.store.rundir import RunDir
 from whisperwind.store.state import active_seconds, apply, initial_state, reduce
 
-T0 = datetime.datetime(2026, 9, 30, 14, 15, 3, tzinfo=datetime.timezone.utc)
+T0 = datetime.datetime(2026, 9, 30, 14, 15, 3, tzinfo=datetime.UTC)
 
 
 # -- run IDs -----------------------------------------------------------------

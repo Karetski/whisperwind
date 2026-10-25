@@ -5,7 +5,7 @@ Usage: python tools/build_zipapp.py dist/whisperwind-<version>-py3-none-any.whl 
 The wheel and its runtime dependencies are installed into a staging directory
 with `uv pip install --target`, which is then zipped with the standard library's
 `zipapp`. Because every dependency is pure Python, the result runs on any
-Python 3.10+ interpreter.
+Python 3.11+ interpreter.
 """
 
 from __future__ import annotations

@@ -21,7 +21,7 @@ class AmbiguousRun(Exception):
 
 
 def new_run_id(flow_name: str, now: datetime.datetime, suffix: str | None = None) -> str:
-    stamp = now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
+    stamp = now.astimezone(datetime.UTC).strftime("%Y%m%dT%H%M%S")
     suffix = suffix or "".join(secrets.choice(_ALPHABET) for _ in range(4))
     return f"{stamp}-{flow_name}-{suffix}"
 

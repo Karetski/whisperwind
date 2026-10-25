@@ -11,7 +11,7 @@ class Clock:
     """Wall-clock time in UTC plus an asyncio sleep."""
 
     def now(self) -> datetime.datetime:
-        return datetime.datetime.now(datetime.timezone.utc)
+        return datetime.datetime.now(datetime.UTC)
 
     def monotonic(self) -> float:
         return time.monotonic()
@@ -24,7 +24,7 @@ class FakeClock(Clock):
     """A clock that only moves when told to, or when something sleeps on it."""
 
     def __init__(self, start: datetime.datetime | None = None) -> None:
-        self._now = start or datetime.datetime(2026, 9, 30, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        self._now = start or datetime.datetime(2026, 9, 30, 12, 0, 0, tzinfo=datetime.UTC)
         self._mono = 1000.0
 
     def now(self) -> datetime.datetime:
@@ -44,7 +44,7 @@ class FakeClock(Clock):
 
 def iso(moment: datetime.datetime) -> str:
     """ISO 8601 in UTC with milliseconds, as event timestamps use."""
-    return moment.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + (
+    return moment.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.") + (
         f"{moment.microsecond // 1000:03d}Z"
     )
 

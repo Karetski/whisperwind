@@ -67,7 +67,7 @@ class VirtualClock(Clock):
     """Wall-clock time that follows the running loop's (virtual) time."""
 
     def __init__(self, start: datetime.datetime | None = None) -> None:
-        self.start = start or datetime.datetime(2026, 9, 30, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        self.start = start or datetime.datetime(2026, 9, 30, 12, 0, 0, tzinfo=datetime.UTC)
 
     def _loop_time(self) -> float:
         try:

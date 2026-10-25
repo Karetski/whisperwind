@@ -60,7 +60,7 @@ class NotifyExecutor:
             return str(exc)
         try:
             _, err = await asyncio.wait_for(process.communicate(), COMMAND_TIMEOUT_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.wait()
             return f"the command timed out after {COMMAND_TIMEOUT_S:g}s"

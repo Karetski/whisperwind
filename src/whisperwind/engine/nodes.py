@@ -97,7 +97,7 @@ class SleepExecutor(_Base):
             except ValueError:
                 raise SleepError(f"until: not an ISO 8601 time: {until!r}") from None
             if wake.tzinfo is None:
-                wake = wake.replace(tzinfo=datetime.timezone.utc)
+                wake = wake.replace(tzinfo=datetime.UTC)
         return {"wake_at": iso(max(wake, now))}
 
     async def run(self, ctx: VisitContext) -> AttemptResult:

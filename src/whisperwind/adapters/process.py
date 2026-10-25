@@ -136,7 +136,7 @@ class ProcessAdapter:
                 stdin=asyncio.subprocess.DEVNULL,
             )
             out, _ = await asyncio.wait_for(process.communicate(), 20)
-        except (OSError, asyncio.TimeoutError):
+        except (TimeoutError, OSError):
             return Probe(found=False)
         text = out.decode("utf-8", errors="replace").strip()
         match = re.search(r"\d+\.\d+(\.\d+)?", text)

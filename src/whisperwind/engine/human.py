@@ -172,7 +172,7 @@ async def run_hook(runner: Runner, ctx: VisitContext, command: str, message: str
         )
         try:
             exit_code = await asyncio.wait_for(process.wait(), HOOK_TIMEOUT_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.wait()
     except OSError:
