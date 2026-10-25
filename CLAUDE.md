@@ -25,7 +25,7 @@ Modules the new kernel keeps (harness adapters, process supervision, budgets, wo
 
 - **The code and its tests define what exists; `VISION.md` and the README define what is intended.** The README's status section says which is which. When code and docs disagree about something that exists, stop and raise it; don't invent behavior.
 - **`VISION.md` is locked.** It changes only when direction changes, in a reviewed commit of its own. Decisions in its §15 marked *Proposed* are the owner's to accept; don't build on one as if it were settled.
-- **Dependencies install from wheels; Python 3.11+.** Any runtime dependency is allowed if it publishes wheels for every tier-1 platform and has a compatible license (`VISION.md` §10.4). Until the "Now" milestone lands, CI still enforces pure-Python dependencies, so don't add a compiled dependency before then.
+- **Dependencies install from wheels; Python 3.11+.** Any runtime dependency is allowed if it publishes wheels for every tier-1 platform and has a compatible license (`VISION.md` §10.4).
 - **Adopt before building.** Run the adopt checklist (`VISION.md` §10.1) before building a capability. Building something a maintained library already does needs an ADR saying why.
 - **Decisions get ADRs.** Each accepted decision and each build-instead-of-adopt call is a short ADR in `docs/adr/`: context, decision, consequences, alternatives.
 - **Small slices.** The kernel lands in reviewable slices (DBOS wiring, then paths, then fingerprints, then each primitive), each leaving the build green.

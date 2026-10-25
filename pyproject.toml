@@ -11,7 +11,6 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Alexey Karetski" }]
 requires-python = ">=3.11"
-# Runtime dependencies must be pure Python; CI enforces it.
 dependencies = [
     "fastjsonschema>=2.19",
     "grandalf>=0.8",
@@ -84,3 +83,22 @@ mypy_path = ["tools"]
 [[tool.mypy.overrides]]
 module = ["fastjsonschema", "fastjsonschema.*", "grandalf", "grandalf.*"]
 ignore_missing_imports = true
+
+# Runtime dependencies must carry a compatible license (VISION.md §10.4). CI runs
+# pip-licenses against a fresh environment holding only the built wheel; names
+# match exactly, as SPDX IDs or trove classifiers, so an unrecognized license fails.
+[tool.pip-licenses]
+from = "mixed"
+allow-only = """\
+MIT;MIT License;\
+BSD-2-Clause;BSD-3-Clause;BSD License;\
+Apache-2.0;Apache Software License;\
+MPL-2.0;Mozilla Public License 2.0 (MPL 2.0);\
+LGPL-2.1-or-later;LGPL-3.0-or-later;\
+GNU Lesser General Public License v2 or later (LGPLv2+);\
+GNU Lesser General Public License v3 or later (LGPLv3+);\
+PSF-2.0;Python Software Foundation License;\
+EPL-1.0;Eclipse Public License 1.0 (EPL-1.0)"""
+# grandalf is licensed "GPLv2 | EPLv1" and is used under EPL-1.0, but its classifier
+# names only GPLv2.
+ignore-packages = ["grandalf"]
