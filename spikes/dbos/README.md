@@ -110,3 +110,30 @@ The path syntax is provisional (#33). `review` is a fan-out of three branches, e
    - A step that watches its own workflow's status every 0.1 s, in an AnyIO task group, and kills its process group on CANCELLED stopped the process within 0.2 s. AnyIO's task groups work inside a DBOS async step on the asyncio backend.
    - Polling costs one database read per running step per 0.1 s, about 2,000 reads a second at 200 concurrent steps. A per-process watcher or a DBOS notification would scale better (#39).
 7. **A cancelled or failed branch doesn't stop its siblings.** When one branch was cancelled, the parent failed with ERROR while the other branch kept running. `parallel` must cancel or await its remaining branches when one fails (#56).
+
+## Paused runs: edits and human waits (#37)
+
+`paused.py` runs a flow loaded from a file:
+- `agent` records a fingerprint of its prompt with its checkpoint, and both `agent` and `shell` map DBOS's step-mismatch error to a path;
+- `human` waits on `DBOS.recv` for up to three days;
+- a run still waiting after a few seconds exits with code 4, and `respond` answers it from another process.
+
+`test_paused.py` pauses runs, edits or answers them, and resumes them.
+
+### Findings
+
+1. **V4 holds.**
+   - When a `human` wait starts, DBOS records its deadline as a `DBOS.sleep` step holding the wall-clock wake time.
+   - The process can then exit: the run stays PENDING with no process.
+   - `DBOSClient.send` from another process stores the answer, and the next resume receives it with the deadline unchanged.
+   - A run whose process is still waiting gets the answer 0.2–0.3 s after `send` returns. The answering process itself takes about 0.7 s, most of it importing DBOS.
+2. **Resuming after an answer takes about 2.9 s** in a fresh process: importing DBOS, recovery dispatch through the internal queue, and polling for the result (#39).
+3. **Nothing wakes a run whose deadline passes while it has no process.** `whw resume --due` (VISION.md §6.4) has to find runs whose recorded wake time has passed. The `DBOS.sleep` row stores the time as plain text, so SQL can read it without unpickling.
+4. **V3 holds once the application version is pinned.**
+   - DBOS's default version is an MD5 of every registered workflow's source. So any edit, even to a step the run hasn't reached, changes it, and recovery then skips the paused run forever. `test_paused.py` records this.
+   - With `application_version` pinned per project, edited flows resume, and an edit to a step after the pause takes effect.
+   - DBOS's alternative, patching (`enable_patching` and `DBOS.patch()`), makes flow authors write version branches, so it doesn't fit flows written by users.
+5. **DBOS can't see an edit to a step that already ran,** because it replays by step number and function name. With the fingerprint check disabled, a run whose finished prompt was edited replayed the old result and succeeded. With it, the resume reports `agent#0: prompt changed since the run paused`.
+6. **Inserting or removing a step before the pause shifts step numbers.** DBOS then raises `DBOSUnexpectedStepError` (`step 1, function _fingerprinted_agent_step was recorded when _shell_step was expected`), which the spike reports as `shell#0: a different step was recorded here`. Every primitive must catch it, or the workflow ends in ERROR.
+7. **A divergence must not end the workflow.** `resume_workflow` skips workflows in ERROR as well as SUCCESS, so an errored run can't continue. The spike stops the run process without recording an outcome: the run stays PENDING, and reverting the edit resumes it. Accepting an edit to finished steps would mean forking from the step that diverged, which creates a new run ID (scope finding 5).
+8. **DBOS's internal steps take step numbers too.** A `recv` with a timeout records its deadline at the next step number, and every await of a child's result is a step. So DBOS step numbers never line up with Whisperwind's per-kind ordinals (#33).

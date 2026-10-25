@@ -199,8 +199,16 @@ async def run(
     run_id: str,
     start: Callable[[], Awaitable[WorkflowHandleAsync[Any]]],
     app_name: str = APP_NAME,
+    *,
+    version: str | None = None,
+    wait: float | None = None,
 ) -> Any:
-    """Launch DBOS for one run, start the run or recover it, and return its result."""
+    """Launch DBOS for one run, start the run or recover it, and return its result.
+
+    `version` pins DBOS's application version; without it, DBOS hashes the source of
+    every registered workflow. After `wait` seconds without a result, raise
+    TimeoutError and leave the run to finish in a later process.
+    """
     global _db
     _db = db
     # DBOS leaves SQLite in rollback-journal mode, where writers block readers.
@@ -216,6 +224,7 @@ async def run(
             "log_level": "WARNING",
             # Shutdown waits out one poll of the notification listener (1 s by default).
             "notification_listener_polling_interval_sec": 0.1,
+            "application_version": version,
         }
     )
     DBOS.launch()
@@ -225,7 +234,7 @@ async def run(
         except DBOSNonExistentWorkflowError:
             with SetWorkflowID(run_id):
                 handle = await start()
-        return await handle.get_result()
+        return await asyncio.wait_for(handle.get_result(), wait)
     finally:
         DBOS.destroy()
 
