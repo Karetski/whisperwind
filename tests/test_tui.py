@@ -873,7 +873,7 @@ def pinned_time(monkeypatch: pytest.MonkeyPatch, local_zone: None) -> None:
     """Run IDs and the TUI's clock fixed, so screens render the same on every machine."""
     suffixes = iter("abcdefghijklmnop")
     monkeypatch.setattr("whisperwind.store.ids.secrets.choice", lambda _: next(suffixes))
-    now = datetime.datetime(2026, 9, 30, 12, 5, tzinfo=datetime.timezone.utc)
+    now = datetime.datetime(2026, 9, 30, 12, 5, tzinfo=datetime.UTC)
     monkeypatch.setattr(Clock, "now", lambda self: now)
 
 

@@ -912,7 +912,7 @@ class Runner:
         self._current = (ctx, task, handles_stop)
         try:
             return await task
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AttemptResult(
                 "timed_out", {}, {"kind": "timeout", "message": f"timed out after {timeout:g}s"}
             )

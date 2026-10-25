@@ -181,7 +181,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     since = None
     if args.since:
         seconds = parse_duration(args.since) or 0
-        since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=seconds)
+        since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=seconds)
     filters = runinfo.RunFilter(
         flow=args.flow,
         statuses=frozenset(args.status.split(",")) if args.status else None,

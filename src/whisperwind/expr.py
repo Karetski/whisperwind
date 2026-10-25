@@ -66,7 +66,7 @@ Clock = Callable[[], datetime.datetime]
 
 
 def _utcnow() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc)
+    return datetime.datetime.now(datetime.UTC)
 
 
 # -- parsing ---------------------------------------------------------------

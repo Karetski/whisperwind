@@ -125,7 +125,7 @@ def test_given_builtin_function_when_called_then_returns_documented_result(
 
 def test_given_injected_clock_when_now_called_then_returns_utc_iso_time() -> None:
     # Given
-    clock = lambda: datetime.datetime(2026, 9, 30, 14, 15, 3, tzinfo=datetime.timezone.utc)  # noqa: E731
+    clock = lambda: datetime.datetime(2026, 9, 30, 14, 15, 3, tzinfo=datetime.UTC)  # noqa: E731
 
     # When / Then
     assert parse("now()").evaluate({}, clock) == "2026-09-30T14:15:03Z"
