@@ -14,6 +14,7 @@ The project is pre-release. The kernel is built in phases (`VISION.md` §13); no
 | `docs/adr/` | Decision records, numbered from 0001, with an index in its README. |
 | `src/whisperwind/` | The implementation. `VISION.md` §12 says which modules are kept and ported, reworked, replaced or retired. |
 | `tests/` | Behavior as tested. |
+| `spikes/` | Phase 0 spikes that prove the foundation, each with its findings in a README. Not part of the package; P1 ports what survives into `src/whisperwind/` and deletes it. |
 
 ## Legacy code
 

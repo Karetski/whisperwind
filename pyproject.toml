@@ -42,14 +42,16 @@ dev = [
     "pytest-textual-snapshot>=1.0.0",
     "ruff>=0.6",
 ]
+# Phase 0 spikes in spikes/; not part of the package.
+spike = ["dbos==3.3.0"]
 
 [tool.hatch.version]
 path = "src/whisperwind/__init__.py"
 
 [tool.hatch.build.targets.sdist]
-# Agent and CI configuration, and the repository's own Whisperwind project, are for
-# working on the repository, not for users.
-exclude = [".claude", ".github", "/.whisperwind", "/flows"]
+# Agent and CI configuration, the repository's own Whisperwind project and the Phase 0
+# spikes are for working on the repository, not for users.
+exclude = [".claude", ".github", "/.whisperwind", "/flows", "/spikes"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
