@@ -10,7 +10,8 @@ It starts the run, or recovers it when the database already holds it, and prints
 the flow's result as JSON. Three environment variables drive the crash tests:
 SPIKE_CRASH_AT=N kills the process at the Nth crash point, SPIKE_TRACE names a
 file that lists every crash point passed, and SPIKE_LEDGER names a file that
-records every step execution: its step number, kind, run and process ID.
+records every step execution: its step number, kind, workflow ID, process ID
+and start time.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import os
 import sqlite3
 import sys
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import closing
 from dataclasses import dataclass
@@ -38,7 +40,13 @@ from whisperwind.adapters.fake import FakeAdapter
 
 APP_NAME = "whisperwind-spike"
 CRASH_EXIT = 77
-DB_WRITES = ("init_workflow", "record_operation_result", "update_workflow_outcome")
+DB_WRITES = (
+    "init_workflow",
+    "init_child_workflow",
+    "record_operation_result",
+    "record_get_result",
+    "update_workflow_outcome",
+)
 
 F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
 
@@ -79,7 +87,7 @@ def ledger(step: int, kind: str) -> None:
     """Record a step execution, for tests that count reruns and check which process ran it."""
     if path := os.environ.get("SPIKE_LEDGER"):
         with open(path, "a") as f:
-            f.write(f"{step} {kind} {DBOS.workflow_id} {os.getpid()}\n")
+            f.write(f"{step} {kind} {DBOS.workflow_id} {os.getpid()} {time.time()}\n")
 
 
 def write_event(run_id: str, step: int, kind: str, data: dict[str, Any]) -> None:

@@ -7,6 +7,19 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "anyio"
+version = "4.15.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "idna" },
+    { name = "typing-extensions", marker = "python_full_version < '3.15'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/d2/f4d173e22df740bc37b1db102b386ba719b66e95b0f0d751f556b387e6d2/anyio-4.15.1.tar.gz", hash = "sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94", size = 276966, upload-time = "2026-09-05T10:42:39.44Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/b8/4bd346e22b28902df4d651910f5242c28d84e4a5c2435ca5c3f797ed7e2e/anyio-4.15.1-py3-none-any.whl", hash = "sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101", size = 132079, upload-time = "2026-09-05T10:42:37.923Z" },
+]
+
+[[package]]
 name = "ast-serialize"
 version = "0.11.2"
 source = { registry = "https://pypi.org/simple" }
@@ -301,6 +314,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/38/7b/6d885d139b2ed76e2f4908cf10eae56acc73bf05cbef286357c4559c9a04/hypothesis-6.168.3-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9d120009d145697909f2f0c532f2d568558ddd6990707f8cba6576bfb9770696", size = 1124974, upload-time = "2026-09-28T05:19:49.903Z" },
     { url = "https://files.pythonhosted.org/packages/05/cc/b302ae809b48254830cae57801d0af0b66783df515b5dd56b9f21c8dfa86/hypothesis-6.168.3-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:818b3d09bba60ef90463e47a4bc87275dba1e8aeb184d3102888440ca7c7837d", size = 1171967, upload-time = "2026-09-28T05:20:12.295Z" },
     { url = "https://files.pythonhosted.org/packages/2c/ab/51031080a6600f5b07adf5f9dfa117345c2adda07a5c24bda523e70bd1e9/hypothesis-6.168.3-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:9e3c36eba80e089ecfa28ec08049723223cb41d3cfe4d9988169cf98440e402b", size = 685641, upload-time = "2026-09-28T05:19:44.609Z" },
+]
+
+[[package]]
+name = "idna"
+version = "3.20"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz", hash = "sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44", size = 216463, upload-time = "2026-09-17T14:11:04.752Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl", hash = "sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c", size = 69583, upload-time = "2026-09-17T14:11:03.168Z" },
 ]
 
 [[package]]
@@ -1082,6 +1104,7 @@ dev = [
     { name = "ruff" },
 ]
 spike = [
+    { name = "anyio" },
     { name = "dbos" },
 ]
 
@@ -1101,4 +1124,7 @@ dev = [
     { name = "pytest-textual-snapshot", specifier = ">=1.0.0" },
     { name = "ruff", specifier = ">=0.6" },
 ]
-spike = [{ name = "dbos", specifier = "==3.3.0" }]
+spike = [
+    { name = "anyio", specifier = ">=4" },
+    { name = "dbos", specifier = "==3.3.0" },
+]
