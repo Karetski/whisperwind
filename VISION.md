@@ -168,27 +168,31 @@ The sketch below is illustrative. Exact names and signatures are settled in an A
 from dataclasses import dataclass
 from whisperwind import flow, agent, shell, human, parallel, phase, FlowFailed
 
+
 @dataclass
 class Plan:
     summary: str
     steps: list[str]
+
 
 @dataclass
 class Review:
     approve: bool
     issues: list[str]
 
+
 @flow(phases=["Plan", "Implement", "Review"], budget_usd=5)
 async def implement_feature(goal: str, max_rounds: int = 3) -> str:
     """Plan, implement until the tests pass, review twice, ask before committing."""
     with phase("Plan"):
-        plan = await agent(f"Plan this change: {goal}",
-                           harness="claude", profile="read-only", output=Plan)
+        plan = await agent(
+            f"Plan this change: {goal}", harness="claude", profile="read-only", output=Plan
+        )
 
     with phase("Implement"):
         for _ in range(max_rounds):
-            await agent(f"Implement this plan:\n{plan.steps}",
-                        harness="claude", session="impl")   # rounds share one session
+            # rounds share one session
+            await agent(f"Implement this plan:\n{plan.steps}", harness="claude", session="impl")
             tests = await shell("npm test", check=False)
             if tests.ok:
                 break
