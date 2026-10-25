@@ -195,7 +195,11 @@ async def run(
     """Launch DBOS for one run, start the run or recover it, and return its result."""
     global _db
     _db = db
-    # The run ID doubles as the executor ID, so launching recovers only this run.
+    # DBOS leaves SQLite in rollback-journal mode, where writers block readers.
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+    # The run ID doubles as the executor ID, so launching recovers only this run's
+    # pending workflows; see process_per_run.py for what else isolation needs.
     DBOS(
         config={
             "name": app_name,
