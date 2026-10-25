@@ -249,7 +249,7 @@ The flow file is the same on every tier.
 
 ## Configuration
 
-Configuration lives in `.whisperwind/` in a project, with a per-user file under it. It describes the environment, never flow behavior: harness binaries and tested versions, extra environment variables allowed into steps, token prices, the default hook for waiting human steps, retention for `gc`, patterns masked in logs, and whether the `full` profile is allowed. The file format is still to be decided (`VISION.md` decision D10).
+Configuration lives in `.whisperwind/` in a project, with a per-user file under it. It describes the environment, never flow behavior: harness binaries and tested versions, extra environment variables allowed into steps, token prices, the default hook for waiting human steps, retention for `gc`, patterns masked in logs, and whether the `full` profile is allowed. The format is TOML: `.whisperwind/config.toml` (`VISION.md` decision D10).
 
 ## Security
 

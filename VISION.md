@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Direction locked.** D1–D4 in §15 were accepted on 2026-10-24, and the project's documentation is written around this direction. D5–D13 are *Proposed*. |
+| Status | **Direction locked.** D1–D4, D6–D8 and D10–D13 in §15 were accepted on 2026-10-24, and the project's documentation is written around this direction. D5 and D9 are *Proposed* until the Phase 0 DBOS spikes report. |
 | Date | 2026-10-24 |
 | Scope | Product direction, architecture, foundations, and the phased path to get there |
 | Relation to other docs | `README.md` describes Whisperwind as designed here, for users, and its status section says what runs today. This document holds the reasoning: architecture, roadmap and decisions. The code and its tests define what exists. |
@@ -713,7 +713,7 @@ Before building anything, run the **adopt checklist**:
 | Graph layout | **Adopt** (keep, optional) | grandalf | Only for the static skeleton. The live view is a tree and needs no layout engine. |
 | Telemetry | **Adopt** | OpenTelemetry SDK + OTLP exporter (extra) | Check how much DBOS's own OTel tracing covers before projecting our own spans |
 | Harness wire protocols | **Adopt; SDKs where they earn it** | Claude stream-json, Codex app-server, ACP | Official SDKs are now allowed (D3). Adopt one when it removes owned code without forcing a bundled harness binary over the user's installed CLI ([§9](#9-harnesses)). |
-| Config format | **Adopt** | TOML via stdlib `tomllib` (3.11+) | Lets us drop ruamel.yaml if YAML flows retire (D10) |
+| Config format | **Adopt** | TOML via stdlib `tomllib` (3.11+) | Lets us drop ruamel.yaml once YAML flows retire (D10) |
 | Distribution | **Adopt** | `uv tool install` and pipx, uv-managed Python, container image | The `.pyz` retires (it can't carry compiled code). PEX per platform as an optional single-file channel. |
 | Editor support | **Adopt** (later) | pygls | |
 | **Step paths, fingerprints, divergence UX** | **Own** (on DBOS) | – | The differentiator ([§5.4](#54-step-identity-and-addressing)) |
@@ -836,7 +836,7 @@ Line counts are from `src/whisperwind/` on `main`, 2026-10-24 (16,184 lines tota
 
 **Discarded work.** An ACP adapter built on the old engine (~840 lines) was never merged. It was discarded on 2026-10-24 rather than ported, and the ACP adapter is built on the new kernel in P4 ([§9.1](#91-one-contract-many-adapters)).
 
-**YAML flows.** The recommendation (D1) is to retire them, not to keep them as a second front-end. Two authoring formats would double validation, documentation and testing, and would keep the format and expression layers alive.
+**YAML flows.** D1 retires them rather than keeping them as a second front-end. Two authoring formats would double validation, documentation and testing, and would keep the format and expression layers alive.
 - The five examples are rewritten by hand in Phase 1 as the parity test.
 - If the project has external users with YAML flows, ship a one-shot `whw migrate flow.yaml` that emits Python and is then deleted one release later.
 - Until then the YAML engine is **frozen**: bug fixes only, no features.
@@ -905,7 +905,7 @@ Each commit does one thing and leaves the build green. The kernel lands in revie
 
 ## 15. Decisions
 
-D1–D4 were **accepted** by the owner on 2026-10-24. D5–D13 are **Proposed**: the owner accepts, amends or rejects each one in Phase 0. Every accepted decision gets an ADR.
+D1–D4, D6–D8 and D10–D13 were **accepted** by the owner on 2026-10-24. D5 and D9 are **Proposed**: the owner accepts, amends or rejects each once the Phase 0 DBOS spikes report. Every accepted decision gets an ADR.
 
 | # | Decision | Status | Choice or recommendation | Main alternative | Reverses |
 |---|---|---|---|---|---|
@@ -914,14 +914,14 @@ D1–D4 were **accepted** by the owner on 2026-10-24. D5–D13 are **Proposed**:
 | **D3** | Dependency policy | **Accepted** ([ADR 0003](docs/adr/0003-dependencies-install-from-wheels.md)) | **Pure-Python rule retired.** Any dependency that installs from wheels on every tier-1 platform. The `.pyz` retires. | Pure core with compiled extras | pre-pivot ADR 0001 (dependency rule) |
 | **D4** | Python floor | **Accepted** ([ADR 0004](docs/adr/0004-python-3-11-floor.md)) | **3.11**; revisit 3.12 in 2027 | 3.12 now | pre-pivot ADR 0001 (version) |
 | **D5** | Concurrency model | Proposed | DBOS child workflows and queues for durable fan-out. asyncio in flows; AnyIO cancel scopes inside the supervisor. | AnyIO everywhere, or raw `TaskGroup` only | pre-pivot ADR 0007 |
-| **D6** | Event table | Proposed | One small Whisperwind table in DBOS's database, keyed by step path, holding only facts DBOS doesn't record. JSONL as an export format. | A separate event store (a second database) | – |
-| **D7** | Harness strategy | Proposed | Own versioned contract; native claude and codex; generic ACP built on the new kernel; adopt official SDKs case by case | ACP as the only contract | – |
-| **D8** | Visualization and editing | Proposed | **L0 skeleton + L1 history + L2 live; the TUI is not a structural editor** | Dry-run tracing for previews | pre-pivot ADR 0002 (TUI editing) |
+| **D6** | Event table | **Accepted** ([ADR 0005](docs/adr/0005-event-table-beside-dbos.md)) | One small Whisperwind table in DBOS's database, keyed by step path, holding only facts DBOS doesn't record. JSONL as an export format. | A separate event store (a second database) | – |
+| **D7** | Harness strategy | **Accepted** ([ADR 0006](docs/adr/0006-harness-strategy.md)) | Own versioned contract; native claude and codex; generic ACP built on the new kernel; adopt official SDKs case by case | ACP as the only contract | – |
+| **D8** | Visualization and editing | **Accepted** ([ADR 0007](docs/adr/0007-visualization-and-editing.md)) | **L0 skeleton + L1 history + L2 live; the TUI is not a structural editor** | Dry-run tracing for previews | pre-pivot ADR 0002 (TUI editing) |
 | **D9** | Daemon | Proposed | **None required through T1; `whw serve` optional at T2+** | A local background daemon | pre-pivot ADR 0008 (softened) |
-| **D10** | Config format | Proposed | **TOML** (`.whisperwind/config.toml`, stdlib `tomllib`), dropping ruamel.yaml | Keep YAML config | – |
-| **D11** | Windows | Proposed | **Defer to P4**; design supervision so Job Objects fit | Support from P1 | – |
-| **D12** | Expose Whisperwind to agents (MCP server or ACP agent: "start a flow from inside Claude") | Proposed | **Defer**: revisit after P4 | Build in P3 | – |
-| **D13** | Versioning | Proposed | The pivot ships as a **new major version**; 0.1.x YAML line gets fixes only | Gradual minor releases | – |
+| **D10** | Config format | **Accepted** ([ADR 0008](docs/adr/0008-config-format-toml.md)) | **TOML** (`.whisperwind/config.toml`, stdlib `tomllib`), dropping ruamel.yaml | Keep YAML config | – |
+| **D11** | Windows | **Accepted** ([ADR 0009](docs/adr/0009-windows-in-p4.md)) | **Defer to P4**; design supervision so Job Objects fit | Support from P1 | – |
+| **D12** | Expose Whisperwind to agents (MCP server or ACP agent: "start a flow from inside Claude") | **Accepted** ([ADR 0010](docs/adr/0010-agent-facing-server-deferred.md)) | **Defer**: revisit after P4 | Build in P3 | – |
+| **D13** | Versioning | **Accepted** ([ADR 0011](docs/adr/0011-new-major-version.md)) | The pivot ships as a **new major version**; 0.1.x YAML line gets fixes only | Gradual minor releases | – |
 
 ---
 
