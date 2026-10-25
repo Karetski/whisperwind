@@ -315,7 +315,7 @@ def _filesystem_type(path: Path) -> str | None:
 def environment_checks(context: Any) -> list[dict[str, str]]:
     checks = []
     version = platform.python_version()
-    ok = sys.version_info >= (3, 10)
+    ok = sys.version_info >= (3, 11)
     checks.append(_check("python", "ok" if ok else "error", f"{version} ({sys.executable})"))
     git = shutil.which("git")
     checks.append(_check("git", "ok" if git else "warn", git or "not found (worktrees need git)"))

@@ -18,9 +18,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
       - uses: actions/setup-python@v7
-        id: py310
+        id: py311
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: The tag matches the package version
         run: |
@@ -40,10 +40,10 @@ jobs:
           uv pip install --python /tmp/pure dist/*.whl
           /tmp/pure/bin/python tools/check_pure_python.py
 
-      - name: Build the zipapp and run it on Python 3.10
+      - name: Build the zipapp and run it on Python 3.11
         run: |
           uv run python tools/build_zipapp.py dist/whisperwind-*.whl pyz/whisperwind.pyz
-          "${{ steps.py310.outputs.python-path }}" pyz/whisperwind.pyz --version
+          "${{ steps.py311.outputs.python-path }}" pyz/whisperwind.pyz --version
 
       - uses: actions/upload-artifact@v7
         with:
