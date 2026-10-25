@@ -43,7 +43,7 @@ dev = [
     "ruff>=0.6",
 ]
 # Phase 0 spikes in spikes/; not part of the package.
-spike = ["dbos==3.3.0"]
+spike = ["anyio>=4", "dbos==3.3.0"]
 
 [tool.hatch.version]
 path = "src/whisperwind/__init__.py"

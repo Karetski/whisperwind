@@ -79,3 +79,34 @@ Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
 
    WAL persists in the file. `dbos_slice.run()` now switches it on before launching DBOS, so the rollback numbers come from runs made before that change.
 6. **SQLite version.** DBOS uses `RETURNING`, which needs SQLite 3.35 or newer. uv-managed CPython 3.11, 3.12 and 3.15 bundle SQLite 3.53, Homebrew's 3.13 and 3.14 bundle 3.54, and macOS's system Python 3.9 bundles 3.51. python.org's installers were not checked. Distribution Pythons with an older SQLite (Ubuntu 20.04, RHEL 8) would fail, which the documented uv-managed install avoids.
+
+## Scopes on child workflows (#35)
+
+`scopes.py` holds every rule that maps a scope path onto DBOS:
+- `parallel` runs each branch as a child workflow with the ID `<parent>/parallel#<n>/<i>`;
+- `rerun` reruns one branch by forking.
+
+The path syntax is provisional (#33). `review` is a fan-out of three branches, each an agent step and a shell step. `slow` runs two branches whose supervised shell step holds a 30-second process. `test_scopes.py` covers V1, V5, V6, and kill-and-resume at each of the fan-out's 48 crash points. The crash points now include child-workflow starts and awaits of a child's result.
+
+### Findings
+
+1. **V1 holds.**
+   - Child workflows with caller-chosen IDs start concurrently from an async workflow on SQLite: the three branches' shell steps started less than 0.3 s apart, the time one of them takes.
+   - DBOS accepts `/`, `#` and `~` in workflow IDs, and records each child's `parent_workflow_id`.
+   - Every kill-and-resume of the fan-out returns the same result without rerunning a checkpointed step. A mutation check (deleting a pending branch's checkpoints) confirmed the test reports reruns.
+2. **A branch must be a registered workflow with serializable inputs.** DBOS recovers each child workflow on its own, from its function and inputs, so `parallel` can't take arbitrary coroutines. For `parallel(agent(...), agent(...))` in VISION.md §5.1 to work, `agent(...)` must return a serializable step description that can run as a child workflow, or branches must be `@step` or `@flow` functions (#32).
+3. **Scope ordinals are deterministic,** because the flow function re-executes from the top on recovery. The spike counts them per workflow ID in a module-level counter. The kernel should keep them in the workflow's own context, so re-executing a workflow twice in one process can't skew them.
+4. **V5 holds, as a two-step fork.**
+   - First, fork the branch from step k. The fork gets a new ID, `…/parallel#0/1~1`.
+   - Then fork the parent from its first `DBOS.getResult` step, with `replacement_children` mapping the old branch to the new one.
+
+   Only the branch's steps from k on, and the parent's steps after the fan-out, run again. Earlier steps and sibling branches are copied, not re-executed.
+5. **A fork costs identity.**
+   - Every fork has a new workflow ID, so rerunning a scope produces a new run ID (`run-1~1`), and a scope's path no longer equals its workflow ID. The path grammar (#33) must separate a scope's path from the fork or attempt that executed it.
+   - A forked branch has no `parent_workflow_id`, so the run tree can't rely on DBOS's parent link after a rerun.
+   - Choosing the parent's fork step means reading DBOS's step names (`DBOS.getResult`) from `operation_outputs`.
+6. **V6 holds only with a supervisor.**
+   - DBOS checks cancellation between steps. Cancelling a branch marks it CANCELLED, but a step already running keeps going: a plain shell step's process was still alive 17.8 s after the cancel.
+   - A step that watches its own workflow's status every 0.1 s, in an AnyIO task group, and kills its process group on CANCELLED stopped the process within 0.2 s. AnyIO's task groups work inside a DBOS async step on the asyncio backend.
+   - Polling costs one database read per running step per 0.1 s, about 2,000 reads a second at 200 concurrent steps. A per-process watcher or a DBOS notification would scale better (#39).
+7. **A cancelled or failed branch doesn't stop its siblings.** When one branch was cancelled, the parent failed with ERROR while the other branch kept running. `parallel` must cancel or await its remaining branches when one fails (#56).
