@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Status | **Direction accepted, details open.** D1–D4 in §15 were accepted on 2026-10-24. The rest are *Proposed*. |
+| Status | **Direction locked.** D1–D4 in §15 were accepted on 2026-10-24, and the project's documentation is written around this direction. D5–D13 are *Proposed*. |
 | Date | 2026-10-24 |
 | Scope | Product direction, architecture, foundations, and the phased path to get there |
-| Relation to other docs | `README.md` describes what Whisperwind does **today**. This document describes where it is **going**. When they disagree, the README is right about the present and this document is right about the intent. |
+| Relation to other docs | `README.md` describes Whisperwind as designed here, for users, and its status section says what runs today. This document holds the reasoning: architecture, roadmap and decisions. The code and its tests define what exists. |
 
 ---
 
@@ -660,7 +660,7 @@ flowchart LR
 |---|---|---|
 | `claude` | Shipped | Keep driving `claude -p --output-format stream-json` directly. The Agent SDK is now allowed (D3), but it bundles its own CLI binary. Evaluate it in P4 for its permission callbacks, which could route approval prompts to `human` steps. |
 | `codex` | Shipped (`exec --json`) | Move to `codex app-server` (JSON-RPC) for fork and mid-turn interrupt once its stability is confirmed. Pin versions and generate the schema from the binary. The official Python SDK (`openai-codex`) drives app-server but bundles a pinned CLI; prefer the user's installed CLI unless that proves worse. |
-| `acp` | Built on the `acp-adapter` branch (~840 lines), not merged | Merge it. It covers every ACP agent in one move. Target ACP v1 stable methods and watch the v2 draft. Keep its hand-written, conformance-tested JSON-RPC client for now. Consider the official Python SDK once it reaches 1.0 (1.0.0rc3 shipped 2026-10-12). |
+| `acp` | Not built | Build it on the versioned contract in P4. It covers every ACP agent in one move. Target ACP v1 stable methods and watch the v2 draft. Use a small hand-written, conformance-tested JSON-RPC client, or the official Python SDK once it reaches 1.0 (1.0.0rc3 shipped 2026-10-12). Issues #10–#12 record the design of an earlier implementation on the old engine: a `_meta` extension carrying the full adapter contract, and two-way transcript replay in the conformance kit. |
 | `command` | Shipped | Keep, for any CLI that prints JSON lines |
 | `fake` | Shipped | Keep. The basis of every engine test and benchmark. |
 
@@ -830,7 +830,7 @@ Line counts are from `src/whisperwind/` on `main`, 2026-10-24 (16,184 lines tota
 | **Replace** | ~2,400 | `engine/runner.py`, `engine/subflow.py`, `store/*` | Replaced by DBOS workflows, steps, queues and messages, plus the small event table. Subflows become child workflows. Event concepts carry over to the event table. |
 | **Retire** | ~5,100 | `purity.py` (replaced by the wheel check), `expr.py`, `templates.py`, `rendering.py`, `schema.py`, `flowspec.py`, `flow.py`, `yamlio.py`, `edit.py`, `checks.py`, `graph.py`, `validate.py`, `units.py`, `engine/routing.py`, `engine/registry.py`, `engine/nodes.py`, `engine/inputs.py`, `cli/editing.py`, `tui/editor.py` | Python replaces the format, expression and editing layers. Some `checks.py` lints return as `ast` lints. |
 
-**Unmerged work.** The `acp-adapter` branch (11 commits, ~840-line adapter) targets the adapter contract, which survives. **Merge it before the pivot starts.**
+**Discarded work.** An ACP adapter built on the old engine (~840 lines) was never merged. It was discarded on 2026-10-24 rather than ported, and the ACP adapter is built on the new kernel in P4 ([§9.1](#91-one-contract-many-adapters)).
 
 **YAML flows.** The recommendation (D1) is to retire them, not to keep them as a second front-end. Two authoring formats would double validation, documentation and testing, and would keep the format and expression layers alive.
 - The five examples are rewritten by hand in Phase 1 as the parity test.
@@ -851,14 +851,14 @@ flowchart LR
   P2 --> P4["P4 Ecosystem & release<br/>ACP · app-server<br/>retire YAML · 1.0 beta"]
   P3 --> P4
   P4 --> P5["P5 Scale-out<br/>Postgres · whw serve<br/>workers · sandboxes"]
-  M["Now: merge acp-adapter,<br/>freeze YAML engine,<br/>Python 3.11, wheel policy"] --> P0
+  M["Now: freeze YAML engine,<br/>Python 3.11, wheel policy"] --> P0
 ```
 
 | Phase | Scope | Exit criteria (verifiable) |
 |---|---|---|
-| **Now** | Merge `acp-adapter`. Freeze YAML engine features. Raise `requires-python` to 3.11. Replace the purity CI check with the tier-1 wheel check. | Branch merged with CI green. README states the 3.11 floor and the new install story. |
+| **Now** | Freeze YAML engine features. Raise `requires-python` to 3.11. Replace the purity CI check with the tier-1 wheel check. Retire the `.pyz`. | CI green on 3.11+ with the wheel check. The README's install section matches what CI builds. |
 | **P0 Prove the foundation** | Write ADRs for accepted D1–D4. Settle D5–D13. **DBOS integration spike:** path → child-workflow mapping, per-run recovery, pinned versions, `recv`/`send`, fork, cancellation, on the fake harness. Crash-injection suite. Benchmark harness with baseline numbers. | ADRs written. V1–V8 ([§10.3](#103-the-durable-kernel-adopt-dbos)) pass, or a failed item has an upstream fix or a recorded fallback decision. Bench numbers recorded. |
-| **P1 Kernel on DBOS** | `@flow`, `agent`, `shell`, `human`, `sleep`, `@step`, `phase`, `log`, subflows. DBOS-backed durability and resume, plus the event table. Budgets and limits. `claude`, `codex`, `fake` and `command` adapters on the new kernel. CLI `run`, `resume`, `status`, `logs`, `respond`, `cancel`, `list`, `gc`. `whw check` (lint). Examples rewritten in Python. README rewritten for the new model. | All five examples pass on the fake harness. Crash-at-every-step resume test passes. A live smoke test of one example on Claude and on Codex. README matches behavior (docs test). |
+| **P1 Kernel on DBOS** | `@flow`, `agent`, `shell`, `human`, `sleep`, `@step`, `phase`, `log`, subflows. DBOS-backed durability and resume, plus the event table. Budgets and limits. `claude`, `codex`, `fake` and `command` adapters on the new kernel. CLI `run`, `resume`, `status`, `logs`, `respond`, `cancel`, `list`, `gc`. `whw check` (lint). Examples rewritten in Python. README status updated for the new kernel. | All five examples pass on the fake harness. Crash-at-every-step resume test passes. A live smoke test of one example on Claude and on Codex. README matches behavior (docs test). |
 | **P2 Concurrency** | `parallel`, `pipeline`, `race`, `map`. Scope cancellation. Run, harness and host caps. Budget reserve-then-settle. Auto-worktree for parallel writers. `Workspace` provider interface. | Performance targets ([§7.4](#74-performance-budgets)) green in CI. A 200-way fan-out on the fake harness. Property test: budget overshoot ≤ the largest single in-flight step. Cancel-subtree test: no orphan processes. |
 | **P3 Visibility** | TUI rebuilt: runs, run (tree, timeline, detail), flow (skeleton + history), step. Inline human answers. `whw graph flow.py`. L1 history overlay. `[otel]` extra. | TUI snapshot tests for each screen. Event-to-screen latency ≤ 250 ms in a pilot test. Skeleton golden tests over the example corpus. Spans validate against the pinned semconv. |
 | **P4 Ecosystem & release** | ACP adapter on the versioned contract. Codex app-server adapter. Flow packages via entry points. Agent-assisted flow editing from the TUI. Retire the YAML engine (with `whw migrate` if needed). Optional pygls LSP. | Conformance kit green for every adapter. YAML code deleted. A release tagged as the new major version's beta. |
@@ -874,7 +874,7 @@ flowchart LR
 
 - **This document is the north star.** It changes only when direction changes, and every change is a reviewed commit.
 - **ADRs return** (`docs/adr/`) for each decision in [§15](#15-decisions) and for every *own instead of adopt* call ([§10.1](#101-the-rule) step 5). They are short: context, decision, consequences, alternatives.
-- **The README stays the description of today.** A user-visible change updates it in the same commit, as now.
+- **The README describes Whisperwind as designed, and its status section says what runs today.** A change that makes something real, or changes user-visible behavior, updates the README in the same commit.
 
 ### 14.2 Adopt first, spike before committing
 
@@ -911,7 +911,7 @@ D1–D4 were **accepted** by the owner on 2026-10-24. D5–D13 are **Proposed**:
 | **D4** | Python floor | **Accepted** | **3.11**; revisit 3.12 in 2027 | 3.12 now | ADR 0001 (version) |
 | **D5** | Concurrency model | Proposed | DBOS child workflows and queues for durable fan-out. asyncio in flows; AnyIO cancel scopes inside the supervisor. | AnyIO everywhere, or raw `TaskGroup` only | ADR 0007 |
 | **D6** | Event table | Proposed | One small Whisperwind table in DBOS's database, keyed by step path, holding only facts DBOS doesn't record. JSONL as an export format. | A separate event store (a second database) | – |
-| **D7** | Harness strategy | Proposed | Own versioned contract; native claude and codex; generic ACP; merge `acp-adapter` now; adopt official SDKs case by case | ACP as the only contract | – |
+| **D7** | Harness strategy | Proposed | Own versioned contract; native claude and codex; generic ACP built on the new kernel; adopt official SDKs case by case | ACP as the only contract | – |
 | **D8** | Visualization and editing | Proposed | **L0 skeleton + L1 history + L2 live; the TUI is not a structural editor** | Dry-run tracing for previews | ADR 0002 (TUI editing) |
 | **D9** | Daemon | Proposed | **None required through T1; `whw serve` optional at T2+** | A local background daemon | ADR 0008 (softened) |
 | **D10** | Config format | Proposed | **TOML** (`.whisperwind/config.toml`, stdlib `tomllib`), dropping ruamel.yaml | Keep YAML config | – |
