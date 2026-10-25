@@ -29,12 +29,12 @@ Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
 7. **DBOS fails the wheel policy on Python 3.15.** Its dependency pyyaml 6.0.3 publishes wheels only up to CPython 3.14, so `--only-binary :all:` fails on 3.15, and CI's wheel check would fail once DBOS is a runtime dependency. DBOS installs from wheels on 3.11 and 3.14.
 8. **One license needs a compound entry.** greenlet (through SQLAlchemy) declares `MIT AND PSF-2.0`. Both parts are allowed, but the exact-match check rejects the expression until the allowlist names it. Everything else DBOS brings is allowed.
 9. **Installed size grows from about 12.5 MiB to 48 MiB.** SQLAlchemy (17 MiB) and `psycopg_binary` (17 MiB) account for most of it. DBOS requires the Postgres driver even on SQLite.
-10. **Importing DBOS costs about 120 ms; launching costs little.**
-    - `import dbos` takes about 120 ms in-process (150 ms for a whole interpreter), about 50 ms of it SQLAlchemy.
+10. **Importing DBOS costs 120–460 ms, depending on the machine; launching costs little.**
+    - `import dbos` takes about 120 ms in-process on macOS arm64 (150 ms for a whole interpreter), about 50 ms of it SQLAlchemy. On the GitHub Linux runner it takes about 460 ms (#39).
     - `import whisperwind.cli` takes about 30 ms and doesn't import DBOS.
     - `DBOS.launch()` takes 7–10 ms on an existing database.
 
-    Earlier in the same session, the same measurements came out three to four times higher, apparently because of load on the machine. Treat local timings as rough; the CI benchmark (#39 below) is the reference. Read-only commands stay under the 100 ms startup target only if they never import DBOS, which means reading SQLite directly, which in turn means finding 5 must be solved.
+    Earlier in the same session, the macOS measurements came out three to four times higher, apparently because of load on the machine. Treat local timings as rough; the CI benchmark (#39 below) is the reference. Read-only commands stay under the 100 ms startup target only if they never import DBOS, which means reading SQLite directly, which in turn means finding 5 must be solved.
 11. **Shutdown waits out a poll.** `DBOS.destroy()` takes about 1.0 s by default, because it waits for the notification listener's next poll (`notification_listener_polling_interval_sec`, 1.0 s). At 0.05 s it takes about 60 ms. That poll is also how a run notices a `send` from another process, so the interval trades shutdown time and answer latency against polling load. The slice uses 0.1 s.
 
 ## One process per run (#36)
@@ -161,19 +161,19 @@ The path syntax is provisional (#33). `review` is a fan-out of three branches, e
 
 ### Findings
 
-Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
+Measured with Python 3.11 and DBOS 3.3.0, locally on macOS arm64 and in CI on the GitHub Linux runner (x86_64).
 
-| Metric | Target | Measured | Met |
-|---|---|---|---|
-| Overhead per step (checkpoint + event append) | ≤ 10 ms p95 | 0.70 ms p95, 0.64 ms mean | yes |
-| Concurrent agent steps in one run | ≥ 200, loop lag ≤ 50 ms p99 | 200 branches waiting 1 s each finish in 1.25 s; loop lag 2 ms p99 | yes |
-| RSS with 50 agents in flight | ≤ 150 MB | 81 MiB peak, 74 MiB before the fan-out | yes |
-| Queue dispatch latency, DBOS's default 1 s poll | ≤ 1 s p95 | 1.96 s p95, 1.41 s median | **no** |
-| Queue dispatch latency, 0.1 s poll | ≤ 1 s p95 | 0.73 s p95, 0.18 s median | yes |
-| Steps per run | 10,000 | 10,000 steps in 6.6 s, with no slowdown by the end; 8.1 MiB database | yes |
-| Recovery of a run with 1,000 completed steps | ≤ 1 s | 1.30 s from spawn to the next step | **no** |
-| `whw status` cold start, reading SQLite directly | ≤ 100 ms | 10 ms | yes |
-| `whw status` cold start, through `DBOSClient` | ≤ 100 ms | 161 ms | **no** |
+| Metric | Target | macOS arm64 | Linux CI | Met |
+|---|---|---|---|---|
+| Overhead per step (checkpoint + event append) | ≤ 10 ms p95 | 0.70 ms p95 | 2.33 ms p95 | yes |
+| Concurrent agent steps in one run | ≥ 200, loop lag ≤ 50 ms p99 | 200 branches waiting 1 s each finish in 1.25 s; lag 2 ms p99 | 1.73 s; lag 4 ms p99, 53 ms max | yes |
+| RSS with 50 agents in flight | ≤ 150 MB | 81 MiB peak | 139 MiB peak | yes, barely on Linux |
+| Queue dispatch latency, DBOS's default 1 s poll | ≤ 1 s p95 | 1.96 s p95 | 1.20 s p95 | **no** |
+| Queue dispatch latency, 0.1 s poll | ≤ 1 s p95 | 0.73 s p95 | 0.16 s p95 | yes |
+| Steps per run | 10,000 | 10,000 in 6.6 s, no slowdown by the end | 19.2 s; the last 1,000 at 2.17 ms against 1.92 ms overall; 8.1 MiB database | yes |
+| Recovery of a run with 1,000 completed steps | ≤ 1 s | 1.30 s from spawn to the next step | 1.66 s, ~0.46 s of it importing DBOS | **no** |
+| `whw status` cold start, reading SQLite directly | ≤ 100 ms | 10 ms | 13 ms | yes |
+| `whw status` cold start, through `DBOSClient` | ≤ 100 ms | 161 ms | 491 ms | **no** |
 
 1. **V7 holds where the configuration is Whisperwind's.** Per-step overhead is far inside its target. Queue dispatch meets its target once Whisperwind registers its queues with a 0.1 s poll instead of DBOS's default 1 s.
 2. **Recovery misses its target because of DBOS's internal queue, not replay.** Timing a resume's phases:
@@ -183,5 +183,6 @@ Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
    - replaying the 1,000 checkpointed steps then takes about 0.15 s.
 
    The internal queue polls every second, and DBOS exposes no setting for it. The same wait makes every resume take over a second (paused-run finding 2). Meeting the target needs either a configurable internal-queue poll upstream, or a revised target in VISION.md. That revision is the owner's call.
-3. **`whw status` must not go through DBOS.** A fresh interpreter that reads SQLite with stdlib `sqlite3` takes 10 ms; one that lists workflows through `DBOSClient` takes 161 ms, most of it importing DBOS. That makes the portable serializer (first-slice finding 5) a requirement for any status that shows step outputs.
+3. **`whw status` must not go through DBOS.** A fresh interpreter that reads SQLite with stdlib `sqlite3` takes 10–13 ms; one that lists workflows through `DBOSClient` takes 161 ms on macOS and 491 ms on Linux, most of it importing DBOS. That makes the portable serializer (first-slice finding 5) a requirement for any status that shows step outputs.
 4. **Fan-out width costs little.** 50 and 200 branches each finished within 0.25 s of the 1 s their agents wait, with event-loop lag of 2 ms at p99. Wider fan-outs and the rest of the concurrency targets are P2 (#60).
+5. **Linux RSS is close to its target before any fan-out.** The benchmark process peaked at 139 MiB on Linux before its fan-outs started, against 74 MiB on macOS. So the peak comes from DBOS and the earlier measurements, not from agents in flight, and a per-phase RSS reading is needed before this target becomes a gate (#60).
