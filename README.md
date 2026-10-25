@@ -1,148 +1,167 @@
 # Whisperwind
 
-Whisperwind runs durable, harness-agnostic workflows for AI coding agents from the terminal. You write a **flow**, a graph of steps in one YAML file. A flow might be "plan with one agent, implement with another, run the tests, loop until they pass, ask me before merging". Whisperwind runs it by driving the agent CLIs you already use, **Claude Code** and **Codex CLI**, in headless mode. It never calls model APIs itself.
+Whisperwind is a durable, local-first runtime for multi-agent coding workflows written in plain Python. You write a **flow** as an `async def` function: "plan with one agent, implement with another until the tests pass, run two reviewers in parallel, ask me before committing". Whisperwind runs it by driving the agent CLIs you already use, **Claude Code**, **Codex CLI** and any **ACP** agent, in headless mode. It never calls model APIs itself.
 
-- **Flows are plain files.** You can edit them by hand, from the TUI or with `whw flow` commands, and comments and formatting are kept.
-- **Runs are durable.** Every step is saved before the next one starts. A crashed or killed run resumes where it stopped. A run can wait days for your answer with no process running.
-- **Runs are bounded.** Every run has budgets (USD and tokens), step and visit limits, and timeouts.
-- **There is no daemon.** Schedule runs with cron, systemd or CI. Every command has stable exit codes and `--json` output.
+- **Flows are Python.** Loops, branches, helpers, imports, type checking, debuggers and unit tests come from the language. There is no DSL.
+- **Any harness, in one flow.** Each step picks its harness. Adapters share one versioned contract, checked by a conformance kit.
+- **Concurrent by default.** Fan out to hundreds of agents with `parallel` and `pipeline`. Caps and budgets hold under parallelism.
+- **Durable.** Every effect is a journaled step. A crashed, killed or edited run resumes where it stopped, and a run can wait days for a person with no process running.
+- **Bounded.** Every run has budgets (USD and tokens), step limits and timeouts.
+- **Local-first.** A SQLite file and no daemon on a laptop; Postgres and workers for a team. The flow file doesn't change.
+- **Terminal-native and scriptable.** A live TUI, and a CLI with `--json` output and stable exit codes.
+
+## Status
+
+**Pre-release. Nothing described in this README runs yet.** This README describes Whisperwind as designed. The kernel is being built in phases, each with exit criteria, tracked as [GitHub milestones](https://github.com/Karetski/whisperwind/milestones). [`VISION.md`](VISION.md) has the reasoning, architecture, roadmap and decision log. This section changes as each phase lands.
+
+The 0.1.x releases on PyPI run an earlier, YAML-based flow format. It is frozen, gets bug fixes only, and will be removed.
 
 ## Install
 
-You need Python 3.10+, git, and Linux or macOS.
+You need Python 3.11+, git, and Linux or macOS.
 
 ```sh
-pipx install whisperwind        # or: uv tool install whisperwind
+uv tool install whisperwind     # or: pipx install whisperwind
 whisperwind --version           # `whw` is a short alias
 ```
 
-All dependencies are pure Python. Each GitHub release also ships a single-file `whisperwind.pyz`, which you run with `python3 whisperwind.pyz`.
+With uv, the Python is managed for you, so the system interpreter doesn't matter.
 
-To run agent steps, install and log in to [Claude Code](https://code.claude.com/docs/en/overview) and/or [Codex CLI](https://github.com/openai/codex). `whw adapters --probe` shows what Whisperwind can find.
+To run agent steps, install and log in to [Claude Code](https://code.claude.com/docs/en/overview), [Codex CLI](https://github.com/openai/codex) or any [ACP](https://agentclientprotocol.com) agent. `whw adapters --probe` shows what Whisperwind can find.
 
-## Quickstart
+## A flow
+
+```python
+from dataclasses import dataclass
+from whisperwind import flow, agent, shell, human, parallel, phase, FlowFailed
+
+
+@dataclass
+class Plan:
+    summary: str
+    steps: list[str]
+
+
+@dataclass
+class Review:
+    approve: bool
+    issues: list[str]
+
+
+@flow(phases=["Plan", "Implement", "Review"], budget_usd=5)
+async def implement_feature(goal: str, max_rounds: int = 3) -> str:
+    """Plan, implement until the tests pass, review twice, ask before committing."""
+    with phase("Plan"):
+        plan = await agent(
+            f"Plan this change: {goal}", harness="claude", profile="read-only", output=Plan
+        )
+
+    with phase("Implement"):
+        for _ in range(max_rounds):
+            # rounds share one session
+            await agent(f"Implement this plan:\n{plan.steps}", harness="claude", session="impl")
+            tests = await shell("npm test", check=False)
+            if tests.ok:
+                break
+        else:
+            raise FlowFailed(f"tests still fail after {max_rounds} rounds")
+
+    with phase("Review"):
+        bugs, security = await parallel(
+            agent("Review the diff for bugs", harness="codex", output=Review),
+            agent("Review the diff for security issues", harness="claude", output=Review),
+        )
+
+    issues = bugs.issues + security.issues
+    if await human("Commit?", details=issues, choices=["commit", "stop"]) == "commit":
+        await shell(["git", "commit", "-am", plan.summary])
+    return plan.summary
+```
 
 ```sh
-whw init                           # creates .whisperwind/ and flows/hello.yaml
-whw run flows/hello.yaml --input name=Ada  # runs a shell step, then asks you a question
-whw status @last                   # what happened
-whw tui                            # the terminal UI
+whw run flows/implement.py --goal "add rate limiting"   # or by name: whw run implement-feature
+whw status @last
+whw tui
 ```
 
-`hello.yaml` needs no agent and costs nothing. Every run is recorded under `.whisperwind/runs/<run-id>/`.
+The function signature is the input schema: type hints become `--input` validation and `--help` text. Flows live in `flows/*.py` in a project, or in an installed package that registers them under the `whisperwind.flows` entry point. Long prompts can live in files next to the flow: `prompt("review.md", diff=…)`.
 
-## A flow file
+The names and signatures above are a draft. They are settled in an ADR before the kernel is built.
 
-```yaml
-whisperwind: 1
-name: fix-tests
-description: Let an agent fix failing tests, then ask before committing.
+## Flow primitives
 
-inputs:
-  goal: { type: string, required: true }
+| Kind | Primitive | What it does |
+|---|---|---|
+| **Step** | `agent(prompt, harness=, output=, session=, profile=, workspace=, label=, …)` | One harness turn. `output=` takes a pydantic model, dataclass or TypedDict, or a raw JSON Schema dict. The answer is checked against it, with retries to fix invalid output. |
+| | `shell(cmd, check=, timeout=, workspace=)` | One command in its own process group. |
+| | `human(question, choices=, timeout=, default=)` | Waits for a person, for days if needed, with no process running. |
+| | `sleep(duration)` / `sleep_until(t)` | A durable timer. |
+| | `@step` on any function | A user-defined effect, such as calling the GitHub API. Its result is journaled. |
+| | calling another `@flow` | A subflow, run as a child scope. |
+| | `now()`, `random()`, `uuid()` | Deterministic on replay. |
+| **Combinator** | `parallel(*steps, limit=)` | A barrier. Returns results in order. A failure surfaces as an `ExceptionGroup` unless `return_exceptions=True`. |
+| | `pipeline(items, *stages, limit=)` | Each item flows through the stages with no barrier between stages. The default for fan-out. |
+| | `race(*steps)` / `first(*steps, until=)` | The first result wins, and the losers are cancelled (their processes killed). |
+| | Python `for`, `while`, `if`, `try` | Ordinary control flow. |
+| **Structure** | `with phase("Name"):` | Groups steps for display and addressing. |
+| | `label=` | A stable, human-meaningful step name. |
+| **Context** | `budget.remaining()`, `log()`, `run.id`, `run.inputs` | Read-only run context and narrator lines. |
 
-limits:
-  budget: { usd: 5 }
+## Durability
 
-nodes:
-  fix:
-    type: agent
-    harness: claude
-    prompt: "Make the tests pass. Goal: ${{ inputs.goal }}"
-    session: continue            # later visits continue the same agent session
-    next: test
+Whisperwind runs on [DBOS Transact](https://docs.dbos.dev/), a durable-execution library. Resume works by re-running the flow function and serving completed steps from the journal, so completed steps never rerun. An agent step that was cut off resumes its harness session when one was recorded. Steps marked `on_resume="ask"` ask before running again; `on_resume="restart"` starts them over.
 
-  test:
-    type: shell
-    run: npm test
-    on_error: continue           # a failing test run is routed, not fatal
-    next:
-      - when: nodes.test.exit_code == 0
-        to: approve
-      - when: visits.fix < 3
-        to: fix
-      - to: fail
+This asks three things of flow code:
 
-  approve:
-    type: human
-    message: Tests pass. Commit?
-    choices: [commit, stop]
-    next:
-      - when: nodes.approve.choice == "commit"
-        to: commit
-      - to: end
+1. **Effects only through steps.** Anything that touches the world (agents, commands, files, network, clocks, randomness) goes through a step primitive or a `@step` function.
+2. **Deterministic between steps.** Given the same step results, flow code makes the same calls.
+3. **Concurrency only through combinators.** Use `parallel`, `pipeline` and `race`, not raw `asyncio.create_task` or `gather`.
 
-  commit:
-    type: shell
-    run: git commit -am "Fix tests"
+`whw check flow.py` lints for each of these without running the flow. Every step also carries a fingerprint (its kind, rendered prompt or command, and options). If a resumed run reaches a step whose fingerprint changed, Whisperwind reports the divergence by path and lets you rerun from there, in that scope only, or abort. **Editing a flow while a run is paused is supported.**
+
+## Step paths
+
+Every step has a path: the scopes it was called in, plus its position or label. The same path names the step in the CLI, the TUI, the journal and telemetry.
+
+```
+plan/agent#0                          the planning agent
+implement/agent#2                     the third implementation round
+review/parallel#0/1/agent#0           the second reviewer in the first parallel group
+review/security-review                a step with label="security-review"
 ```
 
-Here is how a flow file works:
+```sh
+whw logs @last/review/parallel#0/1
+whw resume @last --from implement
+```
 
-- **Routing.**
-  - `next` names the step to run after this one succeeds. It can also be a list of `when:` cases, where the first match wins.
-  - `on_error` says what happens when a step fails: `fail` (the default), `continue`, the name of another step, or a list of cases.
-  - `end` finishes the run successfully and `fail` ends it as failed.
-- **Expressions** are a safe subset of Python. They read `inputs`, the results of earlier steps (`nodes.<id>`), `visits.<id>`, variables (`vars`), `run`, allowed `env` variables, and a set of helper functions such as `default`, `len`, `json`, `tail` and `shq`. Inside strings, `${{ … }}` inserts a value.
-- **Top-level keys**:
-  - `inputs`: typed run inputs with defaults.
-  - `defaults`: shared settings for every step, or for every step of one type.
-  - `limits`: `max_steps`, `max_duration` and `budget`.
-  - `templates` and `include`: reusable step fragments, including fragments from shared files.
-  - `outputs`: values the run returns.
-  - `on_wait`: a command to run when a human step starts waiting.
-- **Settings every step accepts**: `max_visits` (loop guard, default 10), `timeout`, `retry` (attempts and backoff), `on_resume` (`resume`, `restart` or `ask`), `workspace`, `env` and `description`.
-- **Built-in limits**:
-  - per run: 200 steps, 8 hours, $25 or 10M tokens
-  - timeouts: agent steps 30m, shell steps 10m, human steps 7d
+Concurrent branches have their own scopes, so a failure in one branch never invalidates another, and editing a prompt in one phase leaves the others cached.
 
-## Step types
+## Limits and concurrency
 
-| Type | What it does |
-|---|---|
-| `agent` | Runs a Claude Code, Codex or custom agent session with a prompt. Options include model, effort, permission profile, allowed and denied tools, extra directories, a per-step budget, and sessions (`new`, `continue`, `resume` or `fork` another step's session). An `output_schema` (JSON Schema) makes the agent's final answer structured JSON that is checked, with automatic retries to fix invalid output. |
-| `shell` | Runs a script (`run`) or a program without a shell (`args`). Can parse stdout as JSON. Full output is saved to files. |
-| `condition` | Only routes, based on expressions. |
-| `human` | Waits for a person: a choice, free text, or an acknowledgement. Can have a timeout with a default answer. |
-| `sleep` | Waits for a duration or until a time. |
-| `set` | Sets variables. |
-| `python` | Calls a Python function (`module:function`) in a child process and returns its JSON result. |
-| `subflow` | Runs another flow file as a child run. |
-| `map` | Runs a subflow once per item of a list, one item at a time. |
-| `handoff` | Opens an agent step's session interactively in your terminal, then continues the flow when you exit. |
-| `notify` | Sends a message through a command or a webhook. |
+| Limit | Scope | Default |
+|---|---|---|
+| `limit=` on a combinator | that call | the run's cap |
+| Concurrent agents | run | 8 |
+| Concurrent agents per harness | every run on the host | per-harness config |
+| Writers per workspace | workspace | 1 |
+| Budget (USD, tokens) | run, phase, step | $25 per run |
 
-Steps run one at a time; there is no parallelism.
+Budgets are reserved before a step starts and settled when it finishes, so parallel steps can't overspend together: total spend never exceeds the budget by more than the largest single in-flight step's overshoot. USD figures are estimates; for harnesses that report only tokens, prices come from the config.
 
-## Running flows
+**Workspaces.** Parallel agents that write get one git worktree each. Read-only agents share the base tree. Whisperwind never merges or pushes; your flow does that with `shell("git …")`. Container and remote-sandbox workspaces come later.
 
-- **Run**: `whw run <flow> --input k=v`. Use `--input k=@file` to read a value from a file, or `--inputs-file`. Add `--detach` to run in the background.
-- **Waiting for people.** When a run reaches a `human` step:
-  - In a terminal, Whisperwind asks you inline.
-  - Without a terminal (cron, CI, `--on-wait exit`), Whisperwind stops with exit code 4.
-  - Anyone can answer later with `whw respond <run> --choice X` (or `--text`, `--ack`), or from the TUI. The run then continues in the background.
-  - `whw resume --due` from cron applies expired human timeouts.
-- **Resume**: `whw resume <run>` continues after a crash, kill or reboot. Steps that already finished are never rerun.
-  - `--from <step>` jumps to a step.
-  - `--reload` uses the edited flow file.
-  - `--rerun` restarts an interrupted step.
-  - `--force` reopens a failed or cancelled run.
-  - Side effects of a step that was cut off halfway are not undone. Set `on_resume: ask` on steps that must not run twice.
-- **Cancel**: `whw cancel <run>`. Ctrl-C only pauses a run, which can then be resumed.
-- **Budgets.** Cost and tokens are tracked per step and per run, and the run stops when a budget is reached. USD figures are estimates. For harnesses that report only tokens, prices come from the config file.
-- **Workspaces.** By default all steps share the working directory. `workspace: worktree` gives a step, or a named group of steps, its own git worktree under `.whisperwind/worktrees/`. Whisperwind never merges or pushes branches; your flow does that with shell steps.
-- **Artifacts.** Each step gets an artifacts directory (`WHISPERWIND_ARTIFACTS_DIR`). List it with `whw artifacts <run>`.
-- **Snapshots.** A run copies the flow and its files when it starts, so editing the flow never affects a run in progress.
-
-## Agents and permissions
-
-**Built-in harnesses**:
+## Harnesses
 
 | Harness | What it is |
 |---|---|
-| `claude` | Claude Code |
+| `claude` | Claude Code, driven through its stream-json output |
 | `codex` | Codex CLI |
-| `fake` | Scripted test double: no processes, no cost |
+| `acp` | Any [Agent Client Protocol](https://agentclientprotocol.com) agent: Gemini CLI, Copilot, Cursor, goose, OpenCode, Qwen and others |
+| `command` | Any CLI that prints JSON lines, described in a config file. No code needed. |
+| `fake` | A scripted test double: no processes, no cost |
+
+Structured output uses the harness's own schema enforcement when it has one. A package can add an adapter under the `whisperwind.adapters` entry point. `whw adapter test <name>` checks an adapter against recorded streams; add `--live` to check it against the real CLI, which costs money.
 
 **Permission profiles**, set per agent step. Anything that would prompt for approval is denied.
 
@@ -150,35 +169,26 @@ Steps run one at a time; there is no parallelism.
 |---|---|
 | `read-only` | Cannot change files. |
 | `edit` (default) | Can edit files in its workspace, and run only the commands you allow. |
-| `full` | Can do anything you can. `whw run` refuses it unless you pass `--allow-full` or set `allow_full: true` in the config. |
-
-**Other agent CLIs**:
-
-- **Command adapters.** Add any agent CLI that prints JSON lines with a YAML file, `.whisperwind/harnesses/<name>.yaml`, which maps its command line and output events. No code needed.
-- **Python plugins.** A package can register an adapter under the `whisperwind.adapters` entry point.
-- **Conformance kit.** `whw adapter test <name>` checks an adapter against recorded streams. Add `--live` to check it against the real CLI, which costs money.
+| `full` | Can do anything you can. Refused unless you pass `--allow-full` or allow it in the config. |
 
 ## Commands
 
-All commands accept `--json`, `--project`, `--config`, `--quiet`, `--verbose`, `--no-color` and `--as <name>`. A run can be named by its ID, a unique prefix, or `@last`.
+All commands accept `--json`. A run can be named by its ID, a unique prefix, or `@last`, followed by a step path.
 
 | Command | Purpose |
 |---|---|
-| `init` | Set up `.whisperwind/` and a starter flow. |
-| `validate <flow>… [--strict]` | Check flows. Errors show line and column; `--strict` turns warnings into errors. |
-| `graph <flow> [--format ascii\|mermaid\|dot\|json]` | Draw a flow's graph. |
-| `flows` | List the flow files in the project. |
-| `run`, `resume`, `wait` | Start a run, continue a run, wait for a run to finish or pause. |
-| `status [<run>]`, `list` | Show one run in detail, the active runs, or run history. |
-| `logs <run> [--follow] [--raw] [--prompt]` | Show the event log, raw agent output or the rendered prompt. |
-| `respond`, `cancel`, `handoff` | Answer a waiting step, cancel a run, open a pending handoff session. |
-| `artifacts <run>` | List a run's files. |
-| `flow add-node\|rm-node\|rename-node\|set\|unset\|connect\|disconnect` | Edit a flow file. Comments and formatting are kept, renames update every reference, and an edit that would break the flow is refused. |
+| `init` | Set up `.whisperwind/` in a project. |
+| `run <flow>` | Start a run. Inputs come from the flow's signature. |
+| `resume <run> [--from <path>] [--due]` | Continue a run. `--due` applies expired timers and human timeouts; run it from cron or CI. |
+| `status [<run>] [--watch] [--format mermaid\|json]`, `list` | Show a run's tree, the active runs, or run history. |
+| `logs <run>[/<path>] [-f]` | Show a step's output and events. |
+| `respond <run>` | Answer a waiting human step, from any process. |
+| `cancel <run>[/<path>]` | Cancel a run or one scope, killing its processes. |
+| `check <flow>` | Lint a flow for the durability rules, without running it. |
+| `graph <flow> [--format text\|mermaid\|json]` | Print a flow's skeleton, read from source without running it. |
 | `adapters [--probe]`, `adapter test` | List harness adapters; test one. |
-| `schema flow\|config\|cli\|harness` | Print JSON Schemas, for example for editor autocompletion. |
 | `gc` | Delete old finished runs and their worktrees. |
-| `doctor [<run>]` | Check your setup, or repair a damaged run. |
-| `tui [<flow>\|<run>]` | Open the terminal UI. |
+| `tui` | Open the terminal UI. |
 
 **Exit codes**:
 
@@ -191,67 +201,62 @@ All commands accept `--json`, `--project`, `--config`, `--quiet`, `--verbose`, `
 | 4 | Waiting for a person |
 | 5 | Cancelled |
 | 6 | Not found |
-| 7 | Conflict: the run is locked, or the file changed during an edit |
+| 7 | Conflict: the run is locked |
 | 8 | The run was interrupted and can be resumed |
 | 70 | Internal error |
 
 ## Terminal UI
 
-`whw tui` has four screens:
+`whw tui` shows a live call tree and timeline for each run, over a static skeleton of the flow:
 
-- **Runs**: live list of runs, with pending questions first.
-- **Run detail**: a live graph and each step's prompt, output, logs, cost and artifacts.
-- **Flows**: validate a flow, or start it with a form built from its inputs.
-- **Graph editor**: stays in sync with the YAML file as you or an agent edit it.
+```
+┌ run 7f3a · implement-feature · ● running · $1.82 / $5.00 · 12m 04s ─────────────────────┐
+│ ▾ Plan                     ✓   1m12s  │ Plan       ████                                  │
+│   ✓ agent#0     claude     $0.21      │ Implement      ██████████████▓▓▓▓                │
+│ ▾ Implement  ↻ 2 of ≤3     ●          │  agent#0       █████                             │
+│   ✓ agent#0     claude     $0.44      │  shell#0            █                            │
+│   ✗ shell#0     exit 1                │  agent#1             ██████▓▓▓▓                  │
+│   ● agent#1     claude     $0.31 …    │ Review                                           │
+│ ▸ Review     ⇉ ×2 (usually 2)  ○      │                                                  │
+│ ? human#0    Commit?           ○      │                                                  │
+├───────────────────────────────────────┴──────────────────────────────────────────────────┤
+│ implement/agent#1 · claude · session 9c2e… · Editing src/limits/middleware.ts            │
+│ > Running npm test -- limits                                                             │
+└ ↑↓ select  ⏎ detail  l logs  a answer  p pause  x cancel  r rerun step  / filter  ? help ┘
+```
 
-Times show in your machine's local timezone; run IDs and stored timestamps stay in UTC. The runs list shows when each run started and finished: the time alone for today's runs, the date and minute for older ones. An active run has no finish time. In a narrow terminal, the list scrolls sideways while the status and run columns stay put. Run detail shows the full start time with the timezone's abbreviation and, once the run has finished, its finish time and how long it took. The timeline has a row per step: its status marker, when it started and, once it has finished, how long it took, what it cost, how many attempts it needed, and where the run went next (`→ test`). A failure the flow handled has a yellow marker and says how: `continued → ask` for `on_error: continue`, or `on_error → fix` for an `on_error` route.
+| Screen | Content |
+|---|---|
+| Runs | Active, waiting and recent runs, with cost, status and age. Runs waiting for you come first. |
+| Run | The live tree, timeline and detail pane. Answer human steps inline; pause, cancel, or rerun a step or scope. |
+| Flow | The flow's skeleton, what past runs of it usually did (rounds, duration, cost), lint results and an inputs form. |
+| Step | Prompt, streaming output, structured result, usage and session ID. Hand off to an interactive harness session. |
 
-The top of run detail sums up the run. While it's active, the summary names the step it's at. A run that failed or was cancelled shows where it stopped, who cancelled it, and why. A run's inputs are listed under a collapsed `inputs` row. One line compares what the run has spent with its limits, e.g. `$0.10 / $25  ·  420 / 10M tokens  ·  2 / 200 steps  ·  4s / 8h`. A limit that is at least half used gets a bar and a percentage. In the timeline, an unfinished step shows how the run stands: waiting for a person, running, interrupted when no runner is live, or cancelled. While the run is active, the graph marks that step the same way. The child runs of a `map` or `subflow` step are listed under it (`↳ ✓ item [2]  4s`, with the item's index for `map`), showing each one's status and, while it's active, the step it's at. Choosing one with `enter` or a click opens it.
+The TUI is a client of the CLI: every action has a command. Prompts are edited as files in `$EDITOR`; structural changes go through your editor or an agent, and you approve the diff.
 
-The graph and the timeline are linked. The graph scrolls to the step the run is at, marks the node of the step selected in the timeline with a background, and dims the nodes the run has not reached. Picking a node in the graph, with a click or with the arrow keys while the graph has focus, selects that node's latest step; a node the run has not reached selects no step. Until you pick a step or a node, the selection follows the latest step as the run moves on; picking the latest step again resumes following.
+**Telemetry.** The optional `whisperwind[otel]` extra exports runs as OpenTelemetry spans using the GenAI semantic conventions, named by step path.
 
-The inspector shows the step selected in the timeline; the latest step is selected when the run opens. Its tabs show only what the step recorded: Prompt (an agent's prompt, or a person's question, the answer it takes and, once given, the answer), Output (any error, then the structured output, an agent's text, a `set` node's values, a condition's branch or a shell's exit code), Activity, Logs, Artifacts, and Usage (harness, session, turns, cost and tokens). Flow shows the edit to the flow file while it differs from the run's snapshot. A tab you pick stays open as you move between steps that have it; otherwise a failed step opens on its logs and any other step on its output. An unfinished step's logs update as they grow, and stay scrolled to the end unless you scroll up.
+## Scaling up
 
-In the graph editor, the graph, the node list and the inspector share one selection. Pick a node in the list, or in the graph with a click or the arrow keys, and the others follow; the graph scrolls to show it and marks it with a background. In the graph, up and down move between rows of nodes, and left and right move along a row. `enter` on a node in the graph edits its fields, like `e`. `end` and `fail` can be selected but have nothing to edit. A flow too big to lay out is shown as a list, and the arrow keys move along it.
+| Tier | Runs | State | Install |
+|---|---|---|---|
+| Laptop | One process per run, no daemon | A SQLite file | `uv tool install whisperwind` |
+| Workstation / CI | Many runs on one host; caps across them; `whw resume --due` from cron | A shared SQLite file | same |
+| Team server | `whw serve` (HTTP + SSE), the TUI connects remotely | Postgres | `whisperwind[server]`, container image |
+| Enterprise | Remote workers; container and remote sandboxes | Postgres | image + extras |
 
-Runs and Flows are the two top-level views. Their keys, `r` and `f`, are pinned at the left of the footer on every screen, and the current view's key is highlighted. Each view keeps its place while you're in the other one: the selected row, the status filter, and any run or flow you opened from it. Pressing the key of the view you're already in goes back to its list.
-
-From the TUI you can answer questions, cancel, resume, open handoffs, and open a step's session in its harness. Every action is a key, and `ctrl+p` opens the command palette.
+The flow file is the same on every tier.
 
 ## Configuration
 
-`.whisperwind/config.yaml` is created by `init`. A per-user file, `~/.config/whisperwind/config.yaml`, applies under it. The config describes the environment, never flow behavior:
-
-- `flow_paths`: where to look for flow files
-- `harnesses`: binary paths and tested versions
-- `env_passthrough`: extra environment variables allowed into steps
-- `prices`: token prices, for USD estimates
-- `on_wait`: the default hook for waiting human steps
-- `retention.keep_days`: used by `gc`
-- `redact`: patterns masked in logs
-- `allow_full`: allow the `full` permission profile
-- `risky_commands`: patterns for commands that should have a human approval before them
+Configuration lives in `.whisperwind/` in a project, with a per-user file under it. It describes the environment, never flow behavior: harness binaries and tested versions, extra environment variables allowed into steps, token prices, the default hook for waiting human steps, retention for `gc`, patterns masked in logs, and whether the `full` profile is allowed. The file format is still to be decided (`VISION.md` decision D10).
 
 ## Security
 
-- Steps start from a clean environment, with only an allowlist of variables plus the auth variables each harness needs.
+- Flows are trusted code from your repository, like a Makefile. They run in-process and are not sandboxed.
+- Agents and commands run in their own process groups, inside workspaces, and start from a clean environment with only an allowlist of variables plus the auth variables each harness needs.
 - Run directories are private (mode `0700`) and ignored by git.
-- `validate` warns when:
-  - agent output is pasted into a shell script without `shq(…)`
-  - a risky command such as `git push` has no human approval before it
-  - a loop is unbounded
-  - a step uses the `full` profile
-- Whisperwind notes when you run a flow file that git does not track.
-- `python` steps, plugins and command adapters run with your privileges.
-
-## Examples
-
-`examples/` has four complete flows:
-
-- [`implement-feature.yaml`](examples/implement-feature.yaml): plan, implement, loop on tests, approve.
-- [`babysit-pr.yaml`](examples/babysit-pr.yaml): watch a PR's CI and have an agent fix failures.
-- [`nightly-deps.yaml`](examples/nightly-deps.yaml): upgrade npm dependencies in a worktree, test, review, open a PR.
-- [`triage-issues.yaml`](examples/triage-issues.yaml): label and answer new GitHub issues, running [`triage-one.yaml`](examples/triage-one.yaml) once per issue.
+- Plugins and command adapters run with your privileges.
 
 ## Development
 
@@ -263,13 +268,7 @@ uv run pytest           # tests (never call a real harness or spend money)
 uv run ruff check .     # lint
 uv run ruff format .    # format
 uv run mypy             # type check
-```
-
-The repository is itself a Whisperwind project: `.whisperwind/config.yaml` configures it, and `flows/` holds flows for working on Whisperwind. `flows/tui-tour.yaml` runs through every part of the run detail screen at no cost, using the scripted `fake` harness. To get `whisperwind` and `whw` commands that run this checkout, with your edits live, install it in editable mode:
-
-```sh
-uv tool install -e .
-whw tui                 # from the repository root: this project's flows and runs
+uv tool install -e .    # `whisperwind` and `whw` commands that run this checkout
 ```
 
 TUI screens are checked against SVG snapshots in `tests/__snapshots__/`. After an intended screen change, run `uv run pytest --snapshot-update` and commit the updated snapshots. On every pull request, CI posts a comment showing each added, changed or removed screen as text, with a diff for the changed ones.
