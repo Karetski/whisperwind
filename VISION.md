@@ -104,7 +104,7 @@ Every line we own is a line we must test, document and keep in sync with the REA
 
 ### 2.3 The design was sequential at its core
 
-ADR 0007 deferred parallelism and promised that the event log would be ready for it. In practice the runner, budgets, workspaces and TUI all assume one active step. Retrofitting concurrency onto a sequential step loop costs more than designing the kernel concurrent from the first line, and fan-out is now the dominant shape of agent work.
+Pre-pivot ADR 0007 deferred parallelism and promised that the event log would be ready for it. In practice the runner, budgets, workspaces and TUI all assume one active step. Retrofitting concurrency onto a sequential step loop costs more than designing the kernel concurrent from the first line, and fan-out is now the dominant shape of agent work.
 
 ### 2.4 What we got right and keep
 
@@ -630,7 +630,7 @@ Every action in the TUI has a CLI equivalent (`whw status --watch`, `whw logs -f
 
 ### 8.4 Editing flows when structure is code
 
-**The TUI stops being a structural graph editor.** That is a real loss, and ADR 0002 rejected Python flows for exactly this reason. It is answered by moving write-back to places where it is safe:
+**The TUI stops being a structural graph editor.** That is a real loss, and pre-pivot ADR 0002 rejected Python flows for exactly this reason. It is answered by moving write-back to places where it is safe:
 
 | What you edit | How | Safety |
 |---|---|---|
@@ -645,7 +645,7 @@ Every action in the TUI has a CLI equivalent (`whw status --watch`, `whw logs -f
 
 ### 9.1 One contract, many adapters
 
-The adapter contract from ADR 0011 survives: `start`, `resume` and `fork` a session, a stream of normalized events, a final result (text, structured output, usage, cost, session ID), cancel, an optional interactive handoff, and declared **capabilities** with graceful degradation. Two things are added:
+The adapter contract from pre-pivot ADR 0011 survives: `start`, `resume` and `fork` a session, a stream of normalized events, a final result (text, structured output, usage, cost, session ID), cancel, an optional interactive handoff, and declared **capabilities** with graceful degradation. Two things are added:
 - a **version** on the contract;
 - event names aligned with ACP's `session/update` vocabulary, so the ACP mapping is near-identity.
 
@@ -690,7 +690,7 @@ ACP is the **breadth** strategy; native adapters are the **depth** strategy.
 Before building anything, run the **adopt checklist**:
 
 1. **Does a maintained library do this well?** Look for releases in the last 6 months, real adoption and a clear owner.
-2. **Is its license compatible?** MIT, Apache-2.0, BSD or MPL are fine for dependencies. BSL, SSPL or proprietary are acceptable only as an external service the user chooses.
+2. **Is its license compatible?** MIT, Apache-2.0, BSD, MPL, LGPL (as a library), PSF-2.0 or EPL-1.0 are fine for dependencies ([§10.4](#104-dependency-policy)). BSL, SSPL or proprietary are acceptable only as an external service the user chooses.
 3. **Does it meet the dependency policy?** Wheels for every tier-1 platform, a compatible license, an acceptable footprint. See [§10.4](#104-dependency-policy).
 4. **Can we wrap it thinly,** in less than about 10% of the lines it saves, without leaking its concepts across our kernel?
 5. **If we build instead, why?** Write the reason in an ADR. Acceptable reasons: it is the product's differentiator, nothing adequate exists, or adopting would break a principle we chose to keep.
@@ -778,7 +778,7 @@ DBOS knows nothing about agents, and that is the right split.
 | Check | How |
 |---|---|
 | Wheels exist for every tier-1 platform | A CI job installs with `--only-binary :all:` on each platform. This replaces today's purity check (`purity.py` and its CI job). |
-| License is compatible | MIT, Apache-2.0, BSD, MPL or LGPL (as a library). BSL and SSPL are never runtime dependencies. |
+| License is compatible | MIT, Apache-2.0, BSD, MPL, LGPL (as a library), PSF-2.0 or EPL-1.0. BSL and SSPL are never runtime dependencies. |
 | Footprint stays small | Track total installed size and `whw` cold start in CI ([§7.4](#74-performance-budgets)). A dependency that blows either budget needs an ADR. |
 | Heavy or optional integrations stay optional | Extras (`[otel]`, `[server]`, `[container]`, `[e2b]`, …), so the default install stays small |
 
@@ -909,15 +909,15 @@ D1–D4 were **accepted** by the owner on 2026-10-24. D5–D13 are **Proposed**:
 
 | # | Decision | Status | Choice or recommendation | Main alternative | Reverses |
 |---|---|---|---|---|---|
-| **D1** | How flows are authored | **Accepted** | Python `async def` + `@flow`. Retire YAML (frozen now, deleted in P4). | Keep YAML as a second front-end | ADR 0002 |
-| **D2** | Durable execution | **Accepted** | **Adopt DBOS Transact.** Whisperwind's paths map onto child workflows. Phase 0 verifies V1–V8. | Own a thin SQLite journal (the fallback) | ADR 0012 (mechanism) |
-| **D3** | Dependency policy | **Accepted** | **Pure-Python rule retired.** Any dependency that installs from wheels on every tier-1 platform. The `.pyz` retires. | Pure core with compiled extras | ADR 0001 (dependency rule) |
-| **D4** | Python floor | **Accepted** | **3.11**; revisit 3.12 in 2027 | 3.12 now | ADR 0001 (version) |
-| **D5** | Concurrency model | Proposed | DBOS child workflows and queues for durable fan-out. asyncio in flows; AnyIO cancel scopes inside the supervisor. | AnyIO everywhere, or raw `TaskGroup` only | ADR 0007 |
+| **D1** | How flows are authored | **Accepted** ([ADR 0001](docs/adr/0001-flows-are-python-functions.md)) | Python `async def` + `@flow`. Retire YAML (frozen now, deleted in P4). | Keep YAML as a second front-end | pre-pivot ADR 0002 |
+| **D2** | Durable execution | **Accepted** ([ADR 0002](docs/adr/0002-adopt-dbos-for-durable-execution.md)) | **Adopt DBOS Transact.** Whisperwind's paths map onto child workflows. Phase 0 verifies V1–V8. | Own a thin SQLite journal (the fallback) | pre-pivot ADR 0012 (mechanism) |
+| **D3** | Dependency policy | **Accepted** ([ADR 0003](docs/adr/0003-dependencies-install-from-wheels.md)) | **Pure-Python rule retired.** Any dependency that installs from wheels on every tier-1 platform. The `.pyz` retires. | Pure core with compiled extras | pre-pivot ADR 0001 (dependency rule) |
+| **D4** | Python floor | **Accepted** ([ADR 0004](docs/adr/0004-python-3-11-floor.md)) | **3.11**; revisit 3.12 in 2027 | 3.12 now | pre-pivot ADR 0001 (version) |
+| **D5** | Concurrency model | Proposed | DBOS child workflows and queues for durable fan-out. asyncio in flows; AnyIO cancel scopes inside the supervisor. | AnyIO everywhere, or raw `TaskGroup` only | pre-pivot ADR 0007 |
 | **D6** | Event table | Proposed | One small Whisperwind table in DBOS's database, keyed by step path, holding only facts DBOS doesn't record. JSONL as an export format. | A separate event store (a second database) | – |
 | **D7** | Harness strategy | Proposed | Own versioned contract; native claude and codex; generic ACP built on the new kernel; adopt official SDKs case by case | ACP as the only contract | – |
-| **D8** | Visualization and editing | Proposed | **L0 skeleton + L1 history + L2 live; the TUI is not a structural editor** | Dry-run tracing for previews | ADR 0002 (TUI editing) |
-| **D9** | Daemon | Proposed | **None required through T1; `whw serve` optional at T2+** | A local background daemon | ADR 0008 (softened) |
+| **D8** | Visualization and editing | Proposed | **L0 skeleton + L1 history + L2 live; the TUI is not a structural editor** | Dry-run tracing for previews | pre-pivot ADR 0002 (TUI editing) |
+| **D9** | Daemon | Proposed | **None required through T1; `whw serve` optional at T2+** | A local background daemon | pre-pivot ADR 0008 (softened) |
 | **D10** | Config format | Proposed | **TOML** (`.whisperwind/config.toml`, stdlib `tomllib`), dropping ruamel.yaml | Keep YAML config | – |
 | **D11** | Windows | Proposed | **Defer to P4**; design supervision so Job Objects fit | Support from P1 | – |
 | **D12** | Expose Whisperwind to agents (MCP server or ACP agent: "start a flow from inside Claude") | Proposed | **Defer**: revisit after P4 | Build in P3 | – |
