@@ -155,3 +155,33 @@ The path syntax is provisional (#33). `review` is a fan-out of three branches, e
 4. **It kills once per run.** A kill during recovery itself (dequeue, re-execution) isn't covered yet. Repeating kill-and-resume from each resumed state would cover it, at the cost of a run time quadratic in the number of points.
 5. **The suite takes about 3 minutes in total:** 45 s for the sequential slice and 2.5 minutes for the fan-out. Each point costs a crash run and a resume, and the resume spends most of its time waiting about 1 s for DBOS's internal recovery queue to poll (#39).
 
+## Benchmark baseline (#39)
+
+`bench.py` measures each metric VISION.md §7.4 proposes, on the fake harness, and prints a Markdown table of the measurements next to their targets. The `bench` CI job runs it on Linux, writes the table to the job summary, and uploads the numbers as JSON. The benchmark records a baseline and never fails the build: making these targets gates is #60.
+
+### Findings
+
+Measured on macOS arm64 with Python 3.11 and DBOS 3.3.0.
+
+| Metric | Target | Measured | Met |
+|---|---|---|---|
+| Overhead per step (checkpoint + event append) | ≤ 10 ms p95 | 0.70 ms p95, 0.64 ms mean | yes |
+| Concurrent agent steps in one run | ≥ 200, loop lag ≤ 50 ms p99 | 200 branches waiting 1 s each finish in 1.25 s; loop lag 2 ms p99 | yes |
+| RSS with 50 agents in flight | ≤ 150 MB | 81 MiB peak, 74 MiB before the fan-out | yes |
+| Queue dispatch latency, DBOS's default 1 s poll | ≤ 1 s p95 | 1.96 s p95, 1.41 s median | **no** |
+| Queue dispatch latency, 0.1 s poll | ≤ 1 s p95 | 0.73 s p95, 0.18 s median | yes |
+| Steps per run | 10,000 | 10,000 steps in 6.6 s, with no slowdown by the end; 8.1 MiB database | yes |
+| Recovery of a run with 1,000 completed steps | ≤ 1 s | 1.30 s from spawn to the next step | **no** |
+| `whw status` cold start, reading SQLite directly | ≤ 100 ms | 10 ms | yes |
+| `whw status` cold start, through `DBOSClient` | ≤ 100 ms | 161 ms | **no** |
+
+1. **V7 holds where the configuration is Whisperwind's.** Per-step overhead is far inside its target. Queue dispatch meets its target once Whisperwind registers its queues with a 0.1 s poll instead of DBOS's default 1 s.
+2. **Recovery misses its target because of DBOS's internal queue, not replay.** Timing a resume's phases:
+   - imports finish at 0.14 s;
+   - the run is re-enqueued for recovery at 0.15 s;
+   - the internal queue dequeues it at 1.14 s;
+   - replaying the 1,000 checkpointed steps then takes about 0.15 s.
+
+   The internal queue polls every second, and DBOS exposes no setting for it. The same wait makes every resume take over a second (paused-run finding 2). Meeting the target needs either a configurable internal-queue poll upstream, or a revised target in VISION.md. That revision is the owner's call.
+3. **`whw status` must not go through DBOS.** A fresh interpreter that reads SQLite with stdlib `sqlite3` takes 10 ms; one that lists workflows through `DBOSClient` takes 161 ms, most of it importing DBOS. That makes the portable serializer (first-slice finding 5) a requirement for any status that shows step outputs.
+4. **Fan-out width costs little.** 50 and 200 branches each finished within 0.25 s of the 1 s their agents wait, with event-loop lag of 2 ms at p99. Wider fan-outs and the rest of the concurrency targets are P2 (#60).
