@@ -15,6 +15,7 @@ Each accepted decision in `VISION.md` §15, and each call to build a capability 
 | [0009](0009-windows-in-p4.md) | Windows support waits for phase P4 | Accepted |
 | [0010](0010-agent-facing-server-deferred.md) | An agent-facing server waits until after phase P4 | Accepted |
 | [0011](0011-new-major-version.md) | The Python kernel ships as a new major version | Accepted |
+| [0014](0014-step-path-grammar.md) | Step path grammar, ordinals and escaping | Proposed |
 
 ## Adding a record
 
