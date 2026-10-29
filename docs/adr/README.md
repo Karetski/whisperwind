@@ -16,6 +16,7 @@ Each accepted decision in `VISION.md` §15, and each call to build a capability 
 | [0010](0010-agent-facing-server-deferred.md) | An agent-facing server waits until after phase P4 | Accepted |
 | [0011](0011-new-major-version.md) | The Python kernel ships as a new major version | Accepted |
 | [0014](0014-step-path-grammar.md) | Step path grammar, ordinals and escaping | Proposed |
+| [0015](0015-flow-api.md) | The flow API: primitive names and signatures | Proposed |
 
 ## Adding a record
 
