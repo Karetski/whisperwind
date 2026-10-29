@@ -15,6 +15,8 @@ Each accepted decision in `VISION.md` §15, and each call to build a capability 
 | [0009](0009-windows-in-p4.md) | Windows support waits for phase P4 | Accepted |
 | [0010](0010-agent-facing-server-deferred.md) | An agent-facing server waits until after phase P4 | Accepted |
 | [0011](0011-new-major-version.md) | The Python kernel ships as a new major version | Accepted |
+| [0012](0012-scopes-as-child-workflows.md) | Concurrent scopes are DBOS child workflows | Accepted |
+| [0013](0013-one-process-per-run.md) | One process per run, no daemon through T1 | Accepted |
 
 ## Adding a record
 
