@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Direction locked.** D1–D4, D6–D8 and D10–D13 in §15 were accepted on 2026-10-24, and the project's documentation is written around this direction. D5 and D9 are *Proposed* until the Phase 0 DBOS spikes report. |
+| Status | **Direction locked.** D1–D13 in §15 are accepted: D1–D4, D6–D8 and D10–D13 on 2026-10-24, and D5 and D9 on 2026-10-28, after the Phase 0 DBOS spikes. The project's documentation is written around this direction. |
 | Date | 2026-10-24 |
 | Scope | Product direction, architecture, foundations, and the phased path to get there |
 | Relation to other docs | `README.md` describes Whisperwind as designed here, for users, and its status section says what runs today. This document holds the reasoning: architecture, roadmap and decisions. The code and its tests define what exists. |
@@ -432,7 +432,7 @@ flowchart TB
 |---|---|---|
 | **Flow SDK** | The user-facing primitives. Turns each call into a DBOS step or child workflow with a path and a fingerprint. | Run processes, store anything itself |
 | **DBOS** (adopted) | Durability: checkpoints step outputs, recovers workflows, durable sleep and messages (`recv`/`send`), queues with concurrency limits | Know about harnesses, sessions or budgets |
-| **Governor** | Budget reserve-then-settle and the caps DBOS queues don't express (per-workspace writers) | Know what a step does |
+| **Governor** | Budget reserve-then-settle, concurrency caps across runs (per harness, per host) and per-workspace writers | Know what a step does |
 | **Event log** | Records what DBOS doesn't: harness session started, progress, usage, pointers to output files | Decide recovery (DBOS does) |
 | **Supervisor** | Owns the life of child processes: spawn in a process group, timeout, cancel, kill, reap. Restart policy per step. | Interpret harness output |
 | **Harness adapters** | Translate one harness's wire protocol to the harness contract ([§9](#9-harnesses)) | Decide retries or budgets |
@@ -488,7 +488,7 @@ flowchart TB
 - **Isolation is for agents, not flows.** Agents run in process groups inside workspaces. Sandboxing belongs to workspace providers, not to Python.
 - **A run waiting on a person has no process.** It ends with exit code 4. Answering it resumes it in the background, as today.
 - **No daemon.** Durable timers (`sleep`, human timeouts) are applied by `whw resume --due` from cron or CI at the local tiers, and by `whw serve` at the team tier.
-- **Open question for Phase 0.** DBOS normally recovers *every* pending workflow of an executor when it launches. Under "one process per run, no daemon", each run process must recover **only its own run**. We need to verify how DBOS's executor IDs and recovery controls support this, and how several processes behave on one SQLite file.
+- **Recovery stays inside the run** ([ADR 0013](docs/adr/0013-one-process-per-run.md)). Each run process uses its own DBOS application name and its run ID as executor ID, so launching recovers only that run, and no other run's process can take its work. Several run processes share one SQLite file, which Whisperwind switches to WAL mode.
 
 ---
 
@@ -508,7 +508,7 @@ flowchart TB
   PAR --> B2["branch 2"] --> A2["agent → process group"]
 ```
 
-- **Durable scopes are DBOS child workflows** ([§5.4](#54-step-identity-and-addressing)). Fan-out is dispatched through **DBOS queues**, which enforce concurrency limits across processes. Inside one process the code is asyncio. DBOS supports `async` workflows and steps, and Textual also runs on asyncio, so the TUI and the engine share a loop model.
+- **Durable scopes are DBOS child workflows** ([§5.4](#54-step-identity-and-addressing)). Fan-out within a run starts child workflows directly, or goes through a per-run DBOS queue when the run needs a limit of its own; caps across runs belong to the Governor ([§7.2](#72-resource-governance)). Inside one process the code is asyncio. DBOS supports `async` workflows and steps, and Textual also runs on asyncio, so the TUI and the engine share a loop model.
 - **AnyIO inside steps.** The supervisor uses AnyIO cancel scopes (level-triggered cancellation, `fail_after` / `move_on_after`) for process lifetimes and timeouts. Flow authors write plain `async def` and never see AnyIO or DBOS.
 - **Cancelling a scope cancels its subtree.** The scope's child workflows are cancelled in DBOS, and every child process in the subtree gets SIGINT, then a grace period, then SIGTERM, then SIGKILL on the process group, as today.
 - **Failures propagate as data up the tree.** A failed branch fails its scope according to the combinator's policy: `parallel` raises an `ExceptionGroup`, `pipeline` marks the item failed, and `race` ignores losers. The failure is recorded before it propagates, so the TUI sees it as an event, not as a crash.
@@ -525,7 +525,7 @@ How DBOS cancellation and AnyIO cancel scopes compose (cancelling a child workfl
 | Writers per workspace | workspace | Two agents editing one tree corrupt each other | 1 |
 | Budget (USD, tokens) | run, phase, step | Bounded by default | $25 per run, as today |
 
-**Concurrency caps map onto DBOS queues.** Each harness gets a queue whose global `concurrency` limit holds across every run and process sharing the database, with `worker_concurrency` limiting one process. There are no lease rows and no daemon. Workspace-writer exclusivity and budgets are not queue-shaped, so the Governor owns them.
+**Concurrency caps across runs belong to the Governor** ([ADR 0013](docs/adr/0013-one-process-per-run.md)). Under one process per run, a shared DBOS queue lets other runs' processes take a run's work, and strand it when they exit. So per-harness and per-host caps are a small Whisperwind mechanism in the same SQLite file, with no daemon. A limit within one run can use a per-run DBOS queue. Workspace-writer exclusivity and budgets are the Governor's too.
 
 **Budgets under parallelism use reserve-then-settle.**
 1. Before a step starts, the Governor reserves its per-step cap, or an estimate when no cap is set.
@@ -797,7 +797,7 @@ The research found no evidence that "compiled code blocked" is a common enterpri
 
 ```mermaid
 flowchart LR
-  T0["T0 Laptop<br/>one run process<br/>SQLite file<br/>no daemon"] --> T1["T1 Workstation / CI<br/>many runs, one host<br/>caps via DBOS queues<br/>cron: whw resume --due"]
+  T0["T0 Laptop<br/>one run process<br/>SQLite file<br/>no daemon"] --> T1["T1 Workstation / CI<br/>many runs, one host<br/>caps via the Governor<br/>cron: whw resume --due"]
   T1 --> T2["T2 Team server<br/>whw serve (HTTP + SSE)<br/>DBOS on Postgres<br/>TUI connects remotely"]
   T2 --> T3["T3 Enterprise<br/>workers on DBOS queues<br/>container / remote sandboxes<br/>OTel to corporate backend"]
 ```
@@ -805,7 +805,7 @@ flowchart LR
 | Tier | Execution | State | Coordination | Workspaces | Install |
 |---|---|---|---|---|---|
 | T0 | In-process | SQLite file (DBOS + events) | – | Worktrees | `uv tool install whisperwind` |
-| T1 | One process per run | Shared SQLite file | DBOS queues (global concurrency) | Worktrees | same |
+| T1 | One process per run | Shared SQLite file | Governor caps across runs; per-run DBOS queues | Worktrees | same |
 | T2 | `whw serve` + local workers | Postgres (DBOS + events) | DBOS queues | Worktrees, containers | `whisperwind[server]`, container image |
 | T3 | Remote workers dequeue runs | Postgres | DBOS queues | Containers, remote sandboxes (e2b, Modal, …) | image + extras |
 
@@ -905,7 +905,7 @@ Each commit does one thing and leaves the build green. The kernel lands in revie
 
 ## 15. Decisions
 
-D1–D4, D6–D8 and D10–D13 were **accepted** by the owner on 2026-10-24. D5 and D9 are **Proposed**: the owner accepts, amends or rejects each once the Phase 0 DBOS spikes report. Every accepted decision gets an ADR.
+D1–D4, D6–D8 and D10–D13 were **accepted** by the owner on 2026-10-24, and D5 and D9 on 2026-10-28, after the Phase 0 DBOS spikes reported. Every accepted decision gets an ADR.
 
 | # | Decision | Status | Choice or recommendation | Main alternative | Reverses |
 |---|---|---|---|---|---|
@@ -913,11 +913,11 @@ D1–D4, D6–D8 and D10–D13 were **accepted** by the owner on 2026-10-24. D5 
 | **D2** | Durable execution | **Accepted** ([ADR 0002](docs/adr/0002-adopt-dbos-for-durable-execution.md)) | **Adopt DBOS Transact.** Whisperwind's paths map onto child workflows. Phase 0 verifies V1–V8. | Own a thin SQLite journal (the fallback) | pre-pivot ADR 0012 (mechanism) |
 | **D3** | Dependency policy | **Accepted** ([ADR 0003](docs/adr/0003-dependencies-install-from-wheels.md)) | **Pure-Python rule retired.** Any dependency that installs from wheels on every tier-1 platform. The `.pyz` retires. | Pure core with compiled extras | pre-pivot ADR 0001 (dependency rule) |
 | **D4** | Python floor | **Accepted** ([ADR 0004](docs/adr/0004-python-3-11-floor.md)) | **3.11**; revisit 3.12 in 2027 | 3.12 now | pre-pivot ADR 0001 (version) |
-| **D5** | Concurrency model | Proposed | DBOS child workflows and queues for durable fan-out. asyncio in flows; AnyIO cancel scopes inside the supervisor. | AnyIO everywhere, or raw `TaskGroup` only | pre-pivot ADR 0007 |
+| **D5** | Concurrency model | **Accepted** ([ADR 0012](docs/adr/0012-scopes-as-child-workflows.md)) | DBOS child workflows and queues for durable fan-out. asyncio in flows; AnyIO cancel scopes inside the supervisor. | AnyIO everywhere, or raw `TaskGroup` only | pre-pivot ADR 0007 |
 | **D6** | Event table | **Accepted** ([ADR 0005](docs/adr/0005-event-table-beside-dbos.md)) | One small Whisperwind table in DBOS's database, keyed by step path, holding only facts DBOS doesn't record. JSONL as an export format. | A separate event store (a second database) | – |
 | **D7** | Harness strategy | **Accepted** ([ADR 0006](docs/adr/0006-harness-strategy.md)) | Own versioned contract; native claude and codex; generic ACP built on the new kernel; adopt official SDKs case by case | ACP as the only contract | – |
 | **D8** | Visualization and editing | **Accepted** ([ADR 0007](docs/adr/0007-visualization-and-editing.md)) | **L0 skeleton + L1 history + L2 live; the TUI is not a structural editor** | Dry-run tracing for previews | pre-pivot ADR 0002 (TUI editing) |
-| **D9** | Daemon | Proposed | **None required through T1; `whw serve` optional at T2+** | A local background daemon | pre-pivot ADR 0008 (softened) |
+| **D9** | Daemon | **Accepted** ([ADR 0013](docs/adr/0013-one-process-per-run.md)) | **None required through T1; `whw serve` optional at T2+** | A local background daemon | pre-pivot ADR 0008 (softened) |
 | **D10** | Config format | **Accepted** ([ADR 0008](docs/adr/0008-config-format-toml.md)) | **TOML** (`.whisperwind/config.toml`, stdlib `tomllib`), dropping ruamel.yaml | Keep YAML config | – |
 | **D11** | Windows | **Accepted** ([ADR 0009](docs/adr/0009-windows-in-p4.md)) | **Defer to P4**; design supervision so Job Objects fit | Support from P1 | – |
 | **D12** | Expose Whisperwind to agents (MCP server or ACP agent: "start a flow from inside Claude") | **Accepted** ([ADR 0010](docs/adr/0010-agent-facing-server-deferred.md)) | **Defer**: revisit after P4 | Build in P3 | – |
