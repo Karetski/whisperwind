@@ -1,6 +1,0 @@
-name: unknown-start
-start: begin
-nodes:
-  a: {type: shell, run: echo}
-
-# expect: E-UNKNOWN-START @ 2:8

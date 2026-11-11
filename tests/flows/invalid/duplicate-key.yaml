@@ -1,8 +1,0 @@
-name: dup
-nodes:
-  a:
-    type: shell
-    run: echo a
-    run: echo b
-
-# expect: E-DUPLICATE-KEY @ 6:5

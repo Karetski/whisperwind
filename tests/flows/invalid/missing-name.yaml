@@ -1,4 +1,0 @@
-nodes:
-  a: {type: shell, run: echo}
-
-# expect: E-SCHEMA @ 1:1

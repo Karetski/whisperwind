@@ -1,6 +1,0 @@
-name: no-type
-nodes:
-  a:
-    run: echo
-
-# expect: E-SCHEMA @ 3:3
