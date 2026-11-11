@@ -42,7 +42,7 @@ A heading item is a level-2 to level-4 heading `ID Title`. The next line holds i
 3. A **decision** (MADR-style: context, decision, consequences, alternatives) cites its questions and hypotheses. The owner accepts it. Only an accepted decision is binding.
 4. **Requirements** in `docs/spec/` state what the system shall do. They are EARS-style where that helps ("WHEN …, THE CLI SHALL …"), and cite the decision behind them. During implementation, tests name the requirement they verify.
 
-Files stay under 300 lines. Research reports in `docs/research/` are dated and cite their sources. They are inputs to decisions, never binding. Tasks and discussion live in GitHub issues and PRs, which refer to ledger IDs; ledger files never cite issue numbers.
+Files stay under 300 lines. Research reports in `docs/research/` are dated and cite their sources. They are inputs to decisions, never binding. Tasks live in GitHub issues, which refer to ledger IDs; ledger files never cite issue numbers.
 
 **What CI checks** (`python3 tools/ledger.py check`)
 - Every item has a title and a valid status, and its ID is unique and matches its file name.
@@ -58,7 +58,7 @@ Files stay under 300 lines. Research reports in `docs/research/` are dated and c
 - An agent starts at `docs/INDEX.md`, opens only the items it needs, and can rely on statuses. "Never build on a proposed decision" becomes a rule CI enforces, not a convention.
 - The script is about 200 lines of owned tooling, built rather than adopted. OpenSpec is the closest tool, but it has no questions, hypotheses or decisions, and it adds a Node toolchain to the repo before any code exists.
 - IDs and front matter port cleanly to OpenSpec or sphinx-needs if the project outgrows this.
-- Plans and task lists stay ephemeral, in issues and PRs. The spec holds only durable truth.
+- Plans and task lists stay ephemeral, in issues. The spec holds only durable truth.
 
 ## Alternatives
 

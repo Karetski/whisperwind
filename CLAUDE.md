@@ -20,6 +20,8 @@ Whisperwind is a lightweight, local-first platform for running coding agents peo
 - **Research is dated and sourced.** Files in `docs/research/` cite primary sources with dates, and mark inferences. Harness CLIs, SDKs and protocols change monthly: check current docs instead of relying on memory.
 - **Run the ledger check before committing:** `python3 tools/ledger.py index && python3 tools/ledger.py check`. Its tests: `python3 -m unittest discover -s tools`.
 - **Adopt before building** applies to tooling too: building something a maintained tool already does needs an ADR.
+- **Don't rush decisions.** The spec phase exists because decisions were made before the details were understood. Leave questions open until the owner has the evidence they want, and don't pick scenarios, primitives or technologies on the owner's behalf.
+- **No pull requests.** This is a solo project: commit small, self-contained commits directly to `main`.
 
 ## Coding conduct
 
